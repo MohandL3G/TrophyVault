@@ -267,6 +267,12 @@ impl eframe::App for PassportApp {
                         .color(egui::Color32::from_rgb(0, 240, 255))
                         .strong(),
                 );
+                ui.label(
+                    egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                        .size(12.0)
+                        .color(egui::Color32::from_rgb(100, 160, 220))
+                        .monospace(),
+                );
 
                 ui.add_space(20.0);
 

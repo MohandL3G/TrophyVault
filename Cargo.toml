@@ -6,7 +6,7 @@ authors = ["MohandL3G"]
 description = "TrophyVault: A luxury gaming achievements passport generator desktop application built in Rust"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/MohandL3G/achievements-passport-desktop"
+repository = "https://github.com/MohandL3G/TrophyVault"
 
 [build-dependencies]
 winres = "0.1"

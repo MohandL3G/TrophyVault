@@ -2,7 +2,7 @@
 
 use crate::data::{AchievementsData, GameItem};
 use crate::generator::{
-    generate_passport_svg, render_svg_to_png, PassportOptions, PassportTheme,
+    generate_passport_svg, render_svg_to_pixmap, render_svg_to_png, PassportOptions, PassportTheme,
 };
 use crate::storage::{
     database_to_achievements_data, get_database_path, load_or_create_database, save_database,
@@ -47,8 +47,9 @@ pub struct PassportApp {
     new_game_parser: String,
     detected_shortcuts: Vec<NonSteamShortcut>,
 
-    // Database Manager search
+    // Database Manager search & cached keys
     db_search_query: String,
+    cached_db_keys: Vec<String>,
 
     // Feedback & Preview
     status_notification: Option<(String, bool)>, // (message, is_error)
@@ -105,14 +106,26 @@ impl PassportApp {
             detected_shortcuts: Vec::new(),
 
             db_search_query: String::new(),
+            cached_db_keys: Vec::new(),
 
             status_notification: None,
             preview_texture: None,
             last_rendered_svg: None,
         };
 
+        app.rebuild_cached_db_keys();
         app.refresh_data_and_preview(&cc.egui_ctx);
         app
+    }
+
+    fn rebuild_cached_db_keys(&mut self) {
+        let mut keys: Vec<String> = self.db.games.keys().cloned().collect();
+        keys.sort_by(|a, b| {
+            let ga = &self.db.games[a];
+            let gb = &self.db.games[b];
+            gb.pct.cmp(&ga.pct).then_with(|| ga.name.cmp(&gb.name))
+        });
+        self.cached_db_keys = keys;
     }
 
     fn refresh_data_and_preview(&mut self, ctx: &egui::Context) {
@@ -135,6 +148,7 @@ impl PassportApp {
             ),
             false,
         ));
+        self.rebuild_cached_db_keys();
         self.refresh_data_and_preview(ctx);
     }
 
@@ -164,23 +178,18 @@ impl PassportApp {
     fn generate_and_render_preview(&mut self, ctx: &egui::Context) {
         if let Some(svg) = self.generate_svg() {
             self.last_rendered_svg = Some(svg.clone());
-            // Render 1200x850 PNG for preview
-            match render_svg_to_png(&svg, 1200, 850) {
-                Ok(png_bytes) => {
-                    if let Ok(image) = image::load_from_memory(&png_bytes) {
-                        let size = [image.width() as _, image.height() as _];
-                        let image_buffer = image.to_rgba8();
-                        let pixels = image_buffer.as_flat_samples();
-                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                            size,
-                            pixels.as_slice(),
-                        );
-                        self.preview_texture = Some(ctx.load_texture(
-                            "passport_preview",
-                            color_image,
-                            egui::TextureOptions::LINEAR,
-                        ));
-                    }
+            // Zero-copy render directly from tiny_skia Pixmap buffer into egui texture
+            match render_svg_to_pixmap(&svg, 1200, 850) {
+                Ok(pixmap) => {
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                        [1200, 850],
+                        pixmap.data(),
+                    );
+                    self.preview_texture = Some(ctx.load_texture(
+                        "passport_preview",
+                        color_image,
+                        egui::TextureOptions::LINEAR,
+                    ));
                 }
                 Err(err) => {
                     self.status_notification = Some((format!("Render error: {}", err), true));
@@ -792,18 +801,28 @@ impl PassportApp {
 
                 ui.add_space(10.0);
 
-                // Table of Games
+                // Table of Games (Optimized with cached keys and virtual row windowing)
                 let query = self.db_search_query.to_lowercase();
-                let mut game_keys: Vec<String> = self.db.games.keys().cloned().collect();
-                game_keys.sort_by(|a, b| {
-                    let ga = &self.db.games[a];
-                    let gb = &self.db.games[b];
-                    gb.pct.cmp(&ga.pct).then_with(|| ga.name.cmp(&gb.name))
-                });
+                let filtered_keys: Vec<&String> = self
+                    .cached_db_keys
+                    .iter()
+                    .filter(|key| {
+                        if query.is_empty() {
+                            true
+                        } else if let Some(game) = self.db.games.get(*key) {
+                            game.name.to_lowercase().contains(&query)
+                                || game.platform.to_lowercase().contains(&query)
+                        } else {
+                            false
+                        }
+                    })
+                    .collect();
 
                 let mut to_delete_key: Option<String> = None;
+                let row_height = 24.0;
+                let total_rows = filtered_keys.len();
 
-                egui::Grid::new("db_games_grid")
+                egui::Grid::new("db_games_grid_header")
                     .striped(true)
                     .min_col_width(80.0)
                     .show(ui, |ui| {
@@ -816,34 +835,43 @@ impl PassportApp {
                         ui.label(egui::RichText::new("Source").strong());
                         ui.label(egui::RichText::new("Actions").strong());
                         ui.end_row();
+                    });
 
-                        for key in game_keys {
-                            let game = &self.db.games[&key];
-                            if !query.is_empty()
-                                && !game.name.to_lowercase().contains(&query)
-                                && !game.platform.to_lowercase().contains(&query)
-                            {
-                                continue;
-                            }
+                egui::ScrollArea::vertical()
+                    .max_height(550.0)
+                    .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                        egui::Grid::new("db_games_grid_body")
+                            .striped(true)
+                            .min_col_width(80.0)
+                            .show(ui, |ui| {
+                                for idx in row_range {
+                                    let key = filtered_keys[idx];
+                                    if let Some(game) = self.db.games.get(key) {
+                                        ui.label(&game.name);
+                                        ui.label(&game.platform);
+                                        ui.label(game.appid.as_deref().unwrap_or("—"));
+                                        ui.label(format!("{}/{}", game.unlocked, game.total));
+                                        ui.label(format!("{}%", game.pct));
+                                        ui.label(format!(
+                                            "{}h {}m",
+                                            game.playtime_minutes / 60,
+                                            game.playtime_minutes % 60
+                                        ));
+                                        ui.label(&game.source);
 
-                            ui.label(&game.name);
-                            ui.label(&game.platform);
-                            ui.label(game.appid.as_deref().unwrap_or("—"));
-                            ui.label(format!("{}/{}", game.unlocked, game.total));
-                            ui.label(format!("{}%", game.pct));
-                            ui.label(format!("{}h {}m", game.playtime_minutes / 60, game.playtime_minutes % 60));
-                            ui.label(&game.source);
-
-                            if ui.button("🗑 Delete").clicked() {
-                                to_delete_key = Some(key.clone());
-                            }
-                            ui.end_row();
-                        }
+                                        if ui.button("🗑 Delete").clicked() {
+                                            to_delete_key = Some(key.clone());
+                                        }
+                                        ui.end_row();
+                                    }
+                                }
+                            });
                     });
 
                 if let Some(key) = to_delete_key {
                     self.db.games.remove(&key);
                     let _ = save_database(&self.db);
+                    self.rebuild_cached_db_keys();
                     self.refresh_data_and_preview(ctx);
                 }
             });

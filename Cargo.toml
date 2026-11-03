@@ -1,5 +1,5 @@
 [package]
-name = "achievements-passport-desktop"
+name = "trophyvault"
 version = "0.0.4"
 edition = "2021"
 authors = ["MohandL3G"]
@@ -7,6 +7,10 @@ description = "TrophyVault: A luxury gaming achievements passport generator desk
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/MohandL3G/TrophyVault"
+
+[[bin]]
+name = "TrophyVault"
+path = "src/main.rs"
 
 [build-dependencies]
 winres = "0.1"

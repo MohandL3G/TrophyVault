@@ -1,4 +1,4 @@
-name: Build Achievements Passport Desktop
+name: Build TrophyVault Desktop
 
 on:
   push:
@@ -28,17 +28,9 @@ jobs:
       - name: Build Release Binary
         run: cargo build --release --verbose
 
-      - name: Stage Artifacts
-        shell: bash
-        run: |
-          mkdir -p dist
-          cp target/release/achievements-passport-desktop.exe dist/
-          cp README.md dist/
-          cd dist && 7z a ../achievements-passport-windows.zip *
-
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: achievements-passport-windows
-          path: achievements-passport-windows.zip
+          name: TrophyVault-Windows
+          path: target/release/TrophyVault.exe
           if-no-files-found: error

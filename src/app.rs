@@ -683,8 +683,11 @@ impl PassportApp {
                 ui.heading("Configured Custom Games");
                 ui.add_space(4.0);
 
+                let manual_games_clone = self.db.manual_games.clone();
+                let mut rescan_needed = false;
                 let mut to_remove = None;
-                for (idx, cfg) in self.db.manual_games.iter().enumerate() {
+
+                for (idx, cfg) in manual_games_clone.iter().enumerate() {
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
                             ui.heading(
@@ -715,7 +718,7 @@ impl PassportApp {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             if ui.button("🔄 Rescan Game").clicked() {
-                                self.run_sync(ctx);
+                                rescan_needed = true;
                             }
                             if ui.button("🗑 Remove").clicked() {
                                 to_remove = Some(idx);
@@ -723,6 +726,10 @@ impl PassportApp {
                         });
                     });
                     ui.add_space(6.0);
+                }
+
+                if rescan_needed {
+                    self.run_sync(ctx);
                 }
 
                 if let Some(idx) = to_remove {

@@ -221,7 +221,6 @@ pub fn parse_non_steam_shortcuts(steam_dir: &Path, steam_id: &str) -> Vec<NonSte
         Err(_) => return list,
     };
 
-    let mut cursor = 0;
     let len = bytes.len();
 
     // Helper closure to read null-terminated ASCII string
@@ -243,7 +242,7 @@ pub fn parse_non_steam_shortcuts(steam_dir: &Path, steam_id: &str) -> Vec<NonSte
     if len < 12 || bytes[0] != 0 {
         return list;
     }
-    cursor = 1;
+    let mut cursor = 1;
     let header = read_cstring(&mut cursor);
     if header.as_deref() != Some("shortcuts") {
         return list;

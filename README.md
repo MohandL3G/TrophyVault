@@ -1,6 +1,6 @@
-# 🎮 Achievements Passport Generator
+# 🏆 TrophyVault
 
-A luxury gaming achievements passport generator desktop application built in **Rust** (using `egui` and `wgpu`).
+A luxury gaming achievements passport generator and persistent records desktop application built in **Rust** (using `egui` and `wgpu`).
 
 Inspired by the Palworld Passport HUD, it aggregates your Steam library, LuaTools games, and PC Ports/Decomps (like **Bloodborne**) into a shareable passport card featuring an overall rating badge (**OVR**), progress telemetry, playtime metrics, and library milestones.
 

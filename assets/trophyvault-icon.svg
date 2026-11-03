@@ -1,0 +1,246 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Background Vignette -->
+    <radialGradient id="bg-radial" cx="50%" cy="45%" r="65%">
+      <stop offset="0%" stop-color="#181e28"/>
+      <stop offset="60%" stop-color="#0e1117"/>
+      <stop offset="100%" stop-color="#05070a"/>
+    </radialGradient>
+
+    <!-- Squircle Metallic Rim -->
+    <linearGradient id="rim-metal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#75869e"/>
+      <stop offset="25%" stop-color="#2e3745"/>
+      <stop offset="50%" stop-color="#8ea2be"/>
+      <stop offset="75%" stop-color="#1f242e"/>
+      <stop offset="100%" stop-color="#47556b"/>
+    </linearGradient>
+
+    <!-- Squircle Surface -->
+    <linearGradient id="surface-plate" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1c222c"/>
+      <stop offset="50%" stop-color="#12161f"/>
+      <stop offset="100%" stop-color="#0b0d12"/>
+    </linearGradient>
+
+    <!-- Cyan Neon Intense Glow -->
+    <filter id="cyan-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="blur1"/>
+      <feGaussianBlur stdDeviation="18" result="blur2"/>
+      <feGaussianBlur stdDeviation="32" result="blur3"/>
+      <feMerge>
+        <feMergeNode in="blur3"/>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="deep-shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.85"/>
+    </filter>
+
+    <filter id="star-shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="-4" dy="14" stdDeviation="12" flood-color="#000000" flood-opacity="0.95"/>
+    </filter>
+
+    <!-- Gold Gradients for Hexagon Bevels -->
+    <linearGradient id="gold-top-left" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff9b8"/>
+      <stop offset="35%" stop-color="#ffd752"/>
+      <stop offset="100%" stop-color="#c99414"/>
+    </linearGradient>
+
+    <linearGradient id="gold-top-right" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffe37d"/>
+      <stop offset="50%" stop-color="#e0a619"/>
+      <stop offset="100%" stop-color="#8c6004"/>
+    </linearGradient>
+
+    <linearGradient id="gold-side-right" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#bf880b"/>
+      <stop offset="100%" stop-color="#634302"/>
+    </linearGradient>
+
+    <linearGradient id="gold-bottom-right" x1="100%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#4a3100"/>
+      <stop offset="100%" stop-color="#9e6e06"/>
+    </linearGradient>
+
+    <linearGradient id="gold-bottom-left" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#5e3f00"/>
+      <stop offset="100%" stop-color="#b8840d"/>
+    </linearGradient>
+
+    <linearGradient id="gold-side-left" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffe06e"/>
+      <stop offset="100%" stop-color="#ad7a08"/>
+    </linearGradient>
+
+    <!-- Gold Inner Hexagon Plate -->
+    <radialGradient id="gold-plate-radial" cx="48%" cy="38%" r="62%">
+      <stop offset="0%" stop-color="#ffea8a"/>
+      <stop offset="35%" stop-color="#e2a81c"/>
+      <stop offset="75%" stop-color="#a17006"/>
+      <stop offset="100%" stop-color="#5e3e00"/>
+    </radialGradient>
+
+    <!-- Trophy Gold Metal -->
+    <linearGradient id="trophy-gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff6bd"/>
+      <stop offset="25%" stop-color="#fed34e"/>
+      <stop offset="65%" stop-color="#c98d08"/>
+      <stop offset="90%" stop-color="#805702"/>
+      <stop offset="100%" stop-color="#ffdf73"/>
+    </linearGradient>
+
+    <!-- Star Facet Highlights -->
+    <linearGradient id="star-facet-high" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="30%" stop-color="#ffe98a"/>
+      <stop offset="100%" stop-color="#e0a316"/>
+    </linearGradient>
+
+    <linearGradient id="star-facet-shadow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a67304"/>
+      <stop offset="100%" stop-color="#472f00"/>
+    </linearGradient>
+
+    <linearGradient id="glass-sweep" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="35%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 1. Background -->
+  <rect width="1024" height="1024" fill="url(#bg-radial)"/>
+
+  <!-- 2. Main Squircle App Tile -->
+  <g filter="url(#deep-shadow)">
+    <rect x="112" y="112" width="800" height="800" rx="210" fill="url(#surface-plate)" stroke="url(#rim-metal)" stroke-width="16"/>
+    <rect x="128" y="128" width="768" height="768" rx="194" fill="none" stroke="#090c12" stroke-width="4" opacity="0.9"/>
+    
+    <!-- Top Chamfer Highlight Arc -->
+    <path d="M 280 120 L 744 120" stroke="#a5b8d1" stroke-width="4" stroke-linecap="round" opacity="0.4"/>
+    
+    <!-- Corner Mechanical Notches -->
+    <g stroke="#263345" stroke-width="4" stroke-linecap="round" opacity="0.8">
+      <path d="M 200 170 L 250 220"/> <path d="M 824 170 L 774 220"/> <path d="M 200 854 L 250 804"/> <path d="M 824 854 L 774 804"/>
+    </g>
+  </g>
+
+  <!-- 3. Circuit Traces with Cyan LED Nodes -->
+  <g stroke="#163347" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.8">
+    <path d="M 170 300 L 260 300 L 300 340"/> <path d="M 140 480 L 220 480"/> <path d="M 170 660 L 250 660 L 280 630"/> <path d="M 854 300 L 764 300 L 724 340"/> <path d="M 884 480 L 804 480"/> <path d="M 854 660 L 774 660 L 744 630"/> <path d="M 420 140 L 420 210"/> <path d="M 604 140 L 604 210"/> <path d="M 420 884 L 420 814"/> <path d="M 604 884 L 604 814"/>
+    <g fill="#00f0ff" stroke="#081d29" stroke-width="2" filter="url(#cyan-glow)">
+      <circle cx="300" cy="340" r="5"/> <circle cx="220" cy="480" r="5"/> <circle cx="280" cy="630" r="5"/> <circle cx="724" cy="340" r="5"/> <circle cx="804" cy="480" r="5"/> <circle cx="744" cy="630" r="5"/> <circle cx="420" cy="210" r="5"/> <circle cx="604" cy="210" r="5"/> <circle cx="420" cy="814" r="5"/> <circle cx="604" cy="814" r="5"/>
+    </g>
+  </g>
+
+  <!-- 4. 3D Beveled Gold Hexagon Frame -->
+  <g filter="url(#deep-shadow)">
+    <!-- 6 Chamfered Gold Facets -->
+    <path d="M 512.00 192.00 L 789.13 352.00 L 737.17 382.00 L 512.00 252.00 Z" fill="url(#gold-top-right)"/>
+    <path d="M 789.13 352.00 L 789.13 672.00 L 737.17 642.00 L 737.17 382.00 Z" fill="url(#gold-side-right)"/>
+    <path d="M 789.13 672.00 L 512.00 832.00 L 512.00 772.00 L 737.17 642.00 Z" fill="url(#gold-bottom-right)"/>
+    <path d="M 512.00 832.00 L 234.87 672.00 L 286.83 642.00 L 512.00 772.00 Z" fill="url(#gold-bottom-left)"/>
+    <path d="M 234.87 672.00 L 234.87 352.00 L 286.83 382.00 L 286.83 642.00 Z" fill="url(#gold-side-left)"/>
+    <path d="M 234.87 352.00 L 512.00 192.00 L 512.00 252.00 L 286.83 382.00 Z" fill="url(#gold-top-left)"/>
+
+    <!-- Sharp Ridge Specular Lines -->
+    <g stroke="#fff7bd" stroke-width="2.5" stroke-linecap="round" opacity="0.7">
+      <line x1="512.0" y1="192.0" x2="512.0" y2="252.0"/>
+      <line x1="789.1281292110203" y1="352.0" x2="737.166604983954" y2="382.0"/>
+      <line x1="234.87187078897966" y1="352.0" x2="286.833395016046" y2="382.0"/>
+    </g>
+    <!-- Outer Edge Highlight Line -->
+    <path d="M 234.87187078897966 352.0 L 512.0 192.0 L 789.1281292110203 352.0" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.75"/>
+  </g>
+
+  <!-- 5. Recessed Inset Hexagon Groove (Cyan Neon Channel) -->
+  <g filter="url(#cyan-glow)">
+    <path d="M 512.00 260.00 L 730.24 386.00 L 730.24 638.00 L 512.00 764.00 L 293.76 638.00 L 293.76 386.00 Z" fill="none" stroke="#00f0ff" stroke-width="12" stroke-linejoin="round" opacity="0.95"/>
+  </g>
+
+  <!-- 6. Inner Gold Hexagon Face Plate -->
+  <g>
+    <path d="M 512.00 268.00 L 723.31 390.00 L 723.31 634.00 L 512.00 756.00 L 300.69 634.00 L 300.69 390.00 Z" fill="url(#gold-plate-radial)"/>
+    <!-- Inset Bevel Shadow -->
+    <path d="M 512.00 268.00 L 723.31 390.00 L 723.31 634.00 L 512.00 756.00 L 300.69 634.00 L 300.69 390.00 Z" fill="none" stroke="#4a3100" stroke-width="5" opacity="0.85"/>
+  </g>
+
+  <!-- 7. Glowing Cyan Trench Behind Trophy & In Handle Cutouts -->
+  <g filter="url(#cyan-glow)" fill="#00f0ff" opacity="0.95">
+    <!-- Left Handle Hole Glow -->
+    <path d="M 416 432 C 374 438 366 470 380 494 C 390 514 416 520 438 516 L 436 534 C 404 538 370 530 356 502 C 336 460 344 416 414 408 Z"/>
+    <!-- Right Handle Hole Glow -->
+    <path d="M 592 432 C 634 438 642 470 628 494 C 618 514 592 520 570 516 L 572 534 C 604 538 638 530 652 502 C 672 460 664 416 594 408 Z"/>
+    <!-- Outer Trophy Neon Halo Stroke -->
+    <g stroke="#00f0ff" stroke-width="14" stroke-linejoin="round" stroke-linecap="round" fill="none">
+      <path d="M 418 412 C 348 420 340 464 360 506 C 374 534 408 542 440 538 L 442 518 C 420 522 394 516 384 496 C 370 472 378 440 418 434 Z"/>
+      <path d="M 590 412 C 660 420 668 464 648 506 C 634 534 600 542 568 538 L 566 518 C 588 522 614 516 624 496 C 638 472 630 440 590 434 Z"/>
+      <path d="M 418 403 L 590 403 C 586 480 560 544 514 560 L 514 590 L 530 596 C 536 598 540 604 540 610 L 540 616 L 468 616 L 468 610 C 468 604 472 598 478 596 L 494 590 L 494 560 C 448 544 422 480 418 403 Z"/>
+      <path d="M 412 376 L 596 376 C 602 376 606 380 606 386 L 602 396 C 600 400 596 403 592 403 L 416 403 C 412 403 408 400 406 396 L 402 386 C 402 380 406 376 412 376 Z"/>
+      <path d="M 458 616 L 550 616 L 560 630 L 448 630 Z"/>
+      <path d="M 432 630 L 576 630 C 581 630 585 633 587 637 L 594 650 C 596 654 593 658 588 658 L 420 658 C 415 658 412 654 414 650 L 421 637 C 423 633 427 630 432 630 Z"/>
+    </g>
+  </g>
+
+  <!-- 8. Trophy Solid Gold Relief -->
+  <g id="trophy-group" filter="url(#deep-shadow)">
+    <g fill="url(#trophy-gold)" stroke="#472e00" stroke-width="3" stroke-linejoin="round">
+      <!-- Left Handle -->
+      <path d="M 418 412 C 348 420 340 464 360 506 C 374 534 408 542 440 538 L 442 518 C 420 522 394 516 384 496 C 370 472 378 440 418 434 Z"/>
+      <!-- Right Handle -->
+      <path d="M 590 412 C 660 420 668 464 648 506 C 634 534 600 542 568 538 L 566 518 C 588 522 614 516 624 496 C 638 472 630 440 590 434 Z"/>
+      <!-- Bowl -->
+      <path d="M 418 403 L 590 403 C 586 480 560 544 514 560 L 514 590 L 530 596 C 536 598 540 604 540 610 L 540 616 L 468 616 L 468 610 C 468 604 472 598 478 596 L 494 590 L 494 560 C 448 544 422 480 418 403 Z"/>
+      <!-- Lip -->
+      <path d="M 412 376 L 596 376 C 602 376 606 380 606 386 L 602 396 C 600 400 596 403 592 403 L 416 403 C 412 403 408 400 406 396 L 402 386 C 402 380 406 376 412 376 Z"/>
+      <!-- Stepped Base -->
+      <path d="M 458 616 L 550 616 L 560 630 L 448 630 Z"/>
+      <!-- Pedestal Base -->
+      <path d="M 432 630 L 576 630 C 581 630 585 633 587 637 L 594 650 C 596 654 593 658 588 658 L 420 658 C 415 658 412 654 414 650 L 421 637 C 423 633 427 630 432 630 Z"/>
+    </g>
+
+    <!-- Trophy Specular Highlights -->
+    <path d="M 426 410 L 430 496 C 434 516 446 534 462 544" stroke="#fff8c7" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.75"/>
+    <path d="M 414 382 L 594 382" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" opacity="0.8"/>
+    <path d="M 430 634 L 578 634" stroke="#fff5b8" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+  </g>
+
+  <!-- 9. Central Star on Trophy Bowl -->
+  <g id="central-star">
+    <!-- Cyan Outline Glow -->
+    <g filter="url(#cyan-glow)">
+      <path d="M 504.00 390.00 L 519.28 426.97 L 559.16 430.08 L 528.73 456.03 L 538.09 494.92 L 504.00 474.00 L 469.91 494.92 L 479.27 456.03 L 448.84 430.08 L 488.72 426.97 Z" fill="none" stroke="#00f0ff" stroke-width="7" stroke-linejoin="round" opacity="0.9"/>
+    </g>
+    <!-- Faceted Gold Star -->
+    <g stroke="#3b2600" stroke-width="1.5">
+      <path d="M 504.00 448.00 L 504.00 394.00 L 518.11 428.58 Z" fill="url(#star-facet-high)"/> <path d="M 504.00 448.00 L 518.11 428.58 L 555.36 431.31 Z" fill="url(#star-facet-shadow)"/> <path d="M 504.00 448.00 L 555.36 431.31 L 526.83 455.42 Z" fill="url(#star-facet-high)"/> <path d="M 504.00 448.00 L 526.83 455.42 L 535.74 491.69 Z" fill="url(#star-facet-shadow)"/> <path d="M 504.00 448.00 L 535.74 491.69 L 504.00 472.00 Z" fill="url(#star-facet-high)"/> <path d="M 504.00 448.00 L 504.00 472.00 L 472.26 491.69 Z" fill="url(#star-facet-shadow)"/> <path d="M 504.00 448.00 L 472.26 491.69 L 481.17 455.42 Z" fill="url(#star-facet-high)"/> <path d="M 504.00 448.00 L 481.17 455.42 L 452.64 431.31 Z" fill="url(#star-facet-shadow)"/> <path d="M 504.00 448.00 L 452.64 431.31 L 489.89 428.58 Z" fill="url(#star-facet-high)"/> <path d="M 504.00 448.00 L 489.89 428.58 L 504.00 394.00 Z" fill="url(#star-facet-shadow)"/>
+    </g>
+  </g>
+
+  <!-- 10. Secondary 3D Star (Overlay Badge at Lower-Right) -->
+  <g id="overlay-star-3d" filter="url(#star-shadow)">
+    <!-- Cyan Outline Glow -->
+    <g filter="url(#cyan-glow)">
+      <path d="M 602.74 484.63 L 607.64 531.53 L 651.96 547.63 L 608.87 566.78 L 607.26 613.90 L 575.73 578.84 L 530.42 591.86 L 554.02 551.05 L 527.63 511.97 L 573.74 521.81 Z" fill="none" stroke="#00f0ff" stroke-width="12" stroke-linejoin="round" opacity="0.95"/>
+    </g>
+
+    <!-- 3D Extrusion Depth -->
+    <path d="M 602.74 484.63 L 607.64 531.53 L 651.96 547.63 L 608.87 566.78 L 607.26 613.90 L 575.73 578.84 L 530.42 591.86 L 554.02 551.05 L 527.63 511.97 L 573.74 521.81 Z" fill="#2b1a00" transform="translate(0, 6)"/>
+
+    <!-- Faceted Gold Star Face -->
+    <g stroke="#301e00" stroke-width="2.5">
+      <path d="M 584.00 550.00 L 602.74 484.63 L 607.64 531.53 Z" fill="url(#star-facet-high)"/> <path d="M 584.00 550.00 L 607.64 531.53 L 651.96 547.63 Z" fill="url(#star-facet-shadow)"/> <path d="M 584.00 550.00 L 651.96 547.63 L 608.87 566.78 Z" fill="url(#star-facet-high)"/> <path d="M 584.00 550.00 L 608.87 566.78 L 607.26 613.90 Z" fill="url(#star-facet-shadow)"/> <path d="M 584.00 550.00 L 607.26 613.90 L 575.73 578.84 Z" fill="url(#star-facet-high)"/> <path d="M 584.00 550.00 L 575.73 578.84 L 530.42 591.86 Z" fill="url(#star-facet-shadow)"/> <path d="M 584.00 550.00 L 530.42 591.86 L 554.02 551.05 Z" fill="url(#star-facet-high)"/> <path d="M 584.00 550.00 L 554.02 551.05 L 527.63 511.97 Z" fill="url(#star-facet-shadow)"/> <path d="M 584.00 550.00 L 527.63 511.97 L 573.74 521.81 Z" fill="url(#star-facet-high)"/> <path d="M 584.00 550.00 L 573.74 521.81 L 602.74 484.63 Z" fill="url(#star-facet-shadow)"/>
+    </g>
+
+    <!-- Star Core Specular Node -->
+    <circle cx="584" cy="550" r="4.5" fill="#ffffff" opacity="0.95" filter="url(#cyan-glow)"/>
+  </g>
+
+  <!-- 11. Glossy Glass Reflection Across Top Half -->
+  <path d="M 120 280 C 120 180 200 120 300 120 L 724 120 C 824 120 904 180 904 280 L 904 420 C 650 380 400 460 120 420 Z" fill="url(#glass-sweep)" opacity="0.75" pointer-events="none"/>
+</svg>

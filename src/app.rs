@@ -263,7 +263,7 @@ impl eframe::App for PassportApp {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.heading(
-                    egui::RichText::new("🎮 Achievements Passport")
+                    egui::RichText::new("🏆 TrophyVault")
                         .color(egui::Color32::from_rgb(0, 240, 255))
                         .strong(),
                 );

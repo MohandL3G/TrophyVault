@@ -1,12 +1,15 @@
 [package]
 name = "achievements-passport-desktop"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 authors = ["MohandL3G"]
-description = "A luxury gaming achievements passport generator desktop application built in Rust"
+description = "TrophyVault: A luxury gaming achievements passport generator desktop application built in Rust"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/MohandL3G/achievements-passport-desktop"
+
+[build-dependencies]
+winres = "0.1"
 
 [dependencies]
 # UI Framework

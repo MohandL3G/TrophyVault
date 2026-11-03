@@ -2,6 +2,8 @@
 **/*.rs.bk
 *.png
 *.svg
+!assets/*.png
+!assets/*.svg
 .DS_Store
 Thumbs.db
 *.log

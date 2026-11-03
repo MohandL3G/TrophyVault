@@ -86,23 +86,23 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
         options.username.trim()
     };
 
-    let title_line = if options.title.trim().is_empty() {
-        "Lv. 80   |   Day 665"
-    } else {
-        options.title.trim()
-    };
-
     if let Some(game) = options.selected_game {
-        // --- SINGLE GAME PASSPORT (e.g. Palworld, Black Myth Wukong) ---
+        // --- SINGLE GAME PASSPORT (e.g. Bloodborne, Palworld, Black Myth Wukong) ---
         let passport_category = format!("{} PASSPORT", game.name.to_uppercase());
         let ovr = game.pct;
         let locked = game.total.saturating_sub(game.unlocked);
-        let status = if game.platinum || game.unlocked == game.total {
+        let status = if game.platinum || (game.total > 0 && game.unlocked == game.total) {
             "100% PERFECT"
         } else if game.unlocked > 0 {
             "IN PROGRESS"
         } else {
             "NOT STARTED"
+        };
+
+        let title_line = if options.title.trim().is_empty() {
+            format!("Status: {}   •   Completion: {}%", status, ovr)
+        } else {
+            options.title.trim().to_string()
         };
 
         let appid_str = game.appid.as_deref().unwrap_or("N/A");
@@ -222,12 +222,12 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     <!-- Item 6: App ID -->
     <g transform="translate(770, 195)">
       <g transform="translate(0, 10)" stroke="{primary}" fill="none">{STEAM_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">App ID</text>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Game Identifier / ID</text>
       <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="30" font-weight="900" fill="{primary}">{appid_str}</text>
     </g>
   </g>
 
-  <!-- SECTION 2: ROSTER / STATS -->
+  <!-- SECTION 2: SUMMARY -->
   <g transform="translate(45, 600)">
     <rect x="0" y="0" width="5" height="24" fill="{primary}" rx="2"/>
     <text x="18" y="19" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="800" fill="{primary}" letter-spacing="2">GAME SUMMARY</text>
@@ -266,10 +266,10 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     </g>
   </g>
 
-  <!-- FOOTER -->
+  <!-- CLEAN FOOTER -->
   <g transform="translate(55, 805)">
-    <text x="0" y="0" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="900" fill="{primary}" letter-spacing="1">achievements.passport</text>
-    <text x="1090" y="0" text-anchor="end" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="14" font-weight="500" fill="#6a829e">Make your own Passport at achievements.passport • Generated from PC Achievements</text>
+    <text x="0" y="0" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="900" fill="{primary}" letter-spacing="2">ACHIEVEMENTS PASSPORT</text>
+    <text x="1090" y="0" text-anchor="end" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="14" font-weight="600" fill="#6a829e">PASSPORT ID: {username} • VERIFIED GAMING RECORD</text>
   </g>
 </svg>"##,
             primary = primary,
@@ -293,10 +293,16 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
             STEAM_ICON = STEAM_ICON
         )
     } else {
-        // --- OVERALL LIBRARY PASSPORT (Full 839 games aggregate) ---
+        // --- OVERALL LIBRARY PASSPORT ---
         let s = &data.stats;
         let ovr = s.ovr_score;
         let completion_rate_str = format!("{:.1}%", s.completion_rate);
+
+        let title_line = if options.title.trim().is_empty() {
+            "Hunter of Yharnam   •   Trophy Hunter"
+        } else {
+            options.title.trim()
+        };
 
         format!(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 850" width="1200" height="850">
@@ -378,7 +384,7 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     <!-- Item 1: Perfect Games -->
     <g transform="translate(30, 65)">
       <g transform="translate(0, 10)" stroke="{primary}" fill="none">{TROPHY_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Perfect Games</text>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Perfect Games (100%)</text>
       <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{perfect_games} <tspan font-size="20" fill="#6a829e">/ {total_games}</tspan></text>
     </g>
 
@@ -410,10 +416,10 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
       <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{steam_unlocked} <tspan font-size="20" fill="#6a829e">/ {steam_total}</tspan></text>
     </g>
 
-    <!-- Item 6: Local & Emulators -->
+    <!-- Item 6: PC Ports & Decomps -->
     <g transform="translate(770, 195)">
       <g transform="translate(0, 10)" stroke="{primary}" fill="none">{EMULATOR_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Ports &amp; Emulators</text>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">PC Ports &amp; Decomps</text>
       <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{emu_unlocked} <tspan font-size="20" fill="#6a829e">/ {emu_total}</tspan></text>
     </g>
   </g>
@@ -466,10 +472,10 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     </g>
   </g>
 
-  <!-- FOOTER -->
+  <!-- CLEAN FOOTER -->
   <g transform="translate(55, 805)">
-    <text x="0" y="0" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="900" fill="{primary}" letter-spacing="1">achievements.passport</text>
-    <text x="1090" y="0" text-anchor="end" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="14" font-weight="500" fill="#6a829e">Make your own Passport at achievements.passport • Generated from PC Achievements</text>
+    <text x="0" y="0" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="900" fill="{primary}" letter-spacing="2">ACHIEVEMENTS PASSPORT</text>
+    <text x="1090" y="0" text-anchor="end" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="14" font-weight="600" fill="#6a829e">PASSPORT ID: {username} • VERIFIED GAMING RECORD</text>
   </g>
 </svg>"##,
             primary = primary,

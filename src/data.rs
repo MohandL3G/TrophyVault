@@ -78,6 +78,7 @@ pub struct AchievementsData {
 }
 
 /// Detect the default directory for the Achievements app.
+#[allow(dead_code)]
 pub fn default_achievements_dir() -> PathBuf {
     // 1. Check APPDATA environment variable on Windows
     if let Ok(appdata) = std::env::var("APPDATA") {
@@ -133,6 +134,7 @@ fn resolve_steam_persona(steam_id: &str) -> Option<String> {
 }
 
 /// Load and parse Achievements data from the specified folder.
+#[allow(dead_code)]
 pub fn load_from_dir(dir: &Path) -> Result<AchievementsData, String> {
     let summary_path = dir.join("dashboard-summary.json");
     if !summary_path.exists() {
@@ -249,8 +251,6 @@ pub fn load_from_dir(dir: &Path) -> Result<AchievementsData, String> {
         0.0
     };
 
-    // Calculate OVR (Overall Rating): a dynamic score blending completion rate,
-    // perfect 100% games count, and total achievement volume (scaled out of 99)
     let perfect_score = (perfect_games as f64 / 46.0).min(1.0) * 40.0;
     let volume_score = (unlocked_achievements as f64 / 3500.0).min(1.0) * 35.0;
     let rate_score = (completion_rate / 15.0).min(1.0) * 25.0;

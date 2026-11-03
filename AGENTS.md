@@ -23,6 +23,15 @@ src/
 └── icons.rs      # Embedded vector SVG HUD icons
 ```
 
+## Development & Agent Workflow
+
+When working on features, bug fixes, or enhancements in this repository, always follow this workflow:
+1. **Issue First**: Every task must have an associated GitHub Issue. Check existing open issues first (`gh issue list`). If an issue already exists for the task, use it; otherwise create a new issue before writing code (`gh issue create`).
+2. **Feature Branch**: Create a dedicated feature branch for the work (e.g., `git checkout -b <issue-number>-<short-description>`). Never commit feature work directly to `main`.
+3. **Targeted Implementation**: Keep changes scoped strictly to the task. Respect Git safety rules (report modified files, preserve unrelated code and comments).
+4. **Pull Request**: Push the branch and open a Pull Request (`gh pr create`) linking the issue (e.g., `Fixes #<issue-id>`).
+5. **Merge & Close**: Once verified, merge the PR into `main` (`gh pr merge --squash --delete-branch`), ensuring the linked issue is automatically closed.
+
 ## Build & CI Guidelines
 
 - **Do Not Build on Resource-Constrained Containers**: Running full GUI Rust builds (with WGPU and graphics dependencies) inside minimal LXC containers can consume significant memory and CPU.

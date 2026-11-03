@@ -143,7 +143,38 @@ pub fn load_or_create_database() -> LibraryDatabase {
 
     if db_path.exists() {
         if let Ok(content) = fs::read_to_string(&db_path) {
-            if let Ok(db) = serde_json::from_str::<LibraryDatabase>(&content) {
+            if let Ok(mut db) = serde_json::from_str::<LibraryDatabase>(&content) {
+                // Sanitize and normalize database entries
+                let mut changed = false;
+
+                // 1. Purge legacy cracked / emulator games (where platform == "steam" and source == "legacy")
+                let before_len = db.games.len();
+                db.games.retain(|_, g| {
+                    !(g.source == "legacy" && g.platform.to_lowercase() == "steam")
+                });
+                if db.games.len() != before_len {
+                    changed = true;
+                }
+
+                // 2. Normalize all Steam entries (official, LuaTools, HubCapTools, Steamidra) to platform: "Steam", source: "steam"
+                for g in db.games.values_mut() {
+                    let plat_lower = g.platform.to_lowercase();
+                    if plat_lower.contains("steam")
+                        && !plat_lower.contains("port")
+                        && !plat_lower.contains("decomp")
+                        && !plat_lower.contains("recomp")
+                    {
+                        if g.platform != "Steam" || g.source != "steam" {
+                            g.platform = "Steam".to_string();
+                            g.source = "steam".to_string();
+                            changed = true;
+                        }
+                    }
+                }
+
+                if changed {
+                    let _ = save_database(&db);
+                }
                 return db;
             }
         }
@@ -208,7 +239,11 @@ fn seed_from_legacy_achievements(db: &mut LibraryDatabase) {
 
                     if let Ok(summary) = serde_json::from_str::<LegacySummary>(&content) {
                         for (name, entry) in summary.entries {
-                            let platform = entry.platform.unwrap_or_else(|| "steam".to_string());
+                            // Only seed games verified from official Steam; ignore cracked/emulator tags (e.g. GSE, CODEX, OnlineFix)
+                            let raw_platform = entry.platform.unwrap_or_default();
+                            if raw_platform != "steam-official" {
+                                continue;
+                            }
                             let id = entry.appid.clone().unwrap_or_else(|| name.clone());
                             let pct = if entry.total > 0 {
                                 entry.pct.max((entry.unlocked * 100) / entry.total)
@@ -223,7 +258,7 @@ fn seed_from_legacy_achievements(db: &mut LibraryDatabase) {
                                 SavedGameEntry {
                                     id,
                                     name,
-                                    platform,
+                                    platform: "Steam".to_string(),
                                     appid: entry.appid,
                                     unlocked: entry.unlocked,
                                     total: entry.total,
@@ -231,7 +266,7 @@ fn seed_from_legacy_achievements(db: &mut LibraryDatabase) {
                                     platinum,
                                     playtime_minutes: 0,
                                     last_played: None,
-                                    source: "legacy".to_string(),
+                                    source: "steam".to_string(),
                                     last_scanned: entry.updated.unwrap_or_else(current_timestamp),
                                     trophies: Vec::new(),
                                 },
@@ -368,13 +403,32 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
         report.luatools_found = luatools_list.len() as u32;
 
         for lua_game in luatools_list {
-            // If already exists in games, update its source/platform
+            // All Steam games (official or added via LuaTools / unlockers) are unified under Steam
             if let Some(existing) = db.games.get_mut(&lua_game.appid) {
-                existing.platform = "Steam (LuaTools)".to_string();
-                existing.source = "luatools".to_string();
+                existing.platform = "Steam".to_string();
+                existing.source = "steam".to_string();
                 if existing.name.chars().all(|c| c.is_ascii_digit()) && !lua_game.name.is_empty() {
                     existing.name = lua_game.name.clone();
                 }
+            } else {
+                db.games.insert(
+                    lua_game.appid.clone(),
+                    SavedGameEntry {
+                        id: lua_game.appid.clone(),
+                        name: lua_game.name.clone(),
+                        platform: "Steam".to_string(),
+                        appid: Some(lua_game.appid.clone()),
+                        unlocked: 0,
+                        total: 0,
+                        pct: 0,
+                        platinum: false,
+                        playtime_minutes: 0,
+                        last_played: None,
+                        source: "steam".to_string(),
+                        last_scanned: 0,
+                        trophies: Vec::new(),
+                    },
+                );
             }
         }
     }
@@ -456,14 +510,19 @@ pub fn database_to_achievements_data(db: &LibraryDatabase) -> AchievementsData {
                 not_started_games += 1;
             }
 
-            if entry.platform.to_lowercase().contains("steam-official") {
-                steam_official_games += 1;
-                steam_official_unlocked += unlocked;
-                steam_official_total += total;
-            } else {
+            let is_decomp_or_port = entry.source == "manual"
+                || entry.platform.to_lowercase().contains("port")
+                || entry.platform.to_lowercase().contains("recomp")
+                || entry.platform.to_lowercase().contains("decomp");
+
+            if is_decomp_or_port {
                 custom_games += 1;
                 custom_unlocked += unlocked;
                 custom_total += total;
+            } else {
+                steam_official_games += 1;
+                steam_official_unlocked += unlocked;
+                steam_official_total += total;
             }
         } else {
             not_started_games += 1;

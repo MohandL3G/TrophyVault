@@ -262,7 +262,7 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     <!-- Stat 4 -->
     <g transform="translate(860, 60)">
       <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="32" font-weight="900" fill="{primary}">{status}</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Trophy State</text>
+      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Clear Status</text>
     </g>
   </g>
 
@@ -409,10 +409,10 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
       <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{in_progress_games} <tspan font-size="20" fill="#6a829e">active</tspan></text>
     </g>
 
-    <!-- Item 5: Steam Official -->
+    <!-- Item 5: Steam Achievements -->
     <g transform="translate(400, 195)">
       <g transform="translate(0, 10)" stroke="{primary}" fill="none">{STEAM_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Steam Official Ach.</text>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Steam Achievements</text>
       <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{steam_unlocked} <tspan font-size="20" fill="#6a829e">/ {steam_total}</tspan></text>
     </g>
 
@@ -424,10 +424,10 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     </g>
   </g>
 
-  <!-- SECTION 2: ROSTER / STATS -->
+  <!-- SECTION 2: LIBRARY OVERVIEW / STATS -->
   <g transform="translate(45, 600)">
     <rect x="0" y="0" width="5" height="24" fill="{primary}" rx="2"/>
-    <text x="18" y="19" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="800" fill="{primary}" letter-spacing="2">LIBRARY ROSTER</text>
+    <text x="18" y="19" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="800" fill="{primary}" letter-spacing="2">LIBRARY OVERVIEW</text>
 
     <!-- Panel Box -->
     <rect x="0" y="32" width="1110" height="135" rx="10" fill="#061929" stroke="{panel_border}" stroke-width="2"/>
@@ -443,7 +443,7 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     <!-- Stat 2: Perfect 100% -->
     <g transform="translate(265, 60)">
       <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="38" font-weight="900" fill="{primary}">{perfect_games}</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">100% Platinums</text>
+      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Perfect Games</text>
     </g>
 
     <line x1="440" y1="52" x2="440" y2="145" stroke="{panel_border}" stroke-width="1.5"/>

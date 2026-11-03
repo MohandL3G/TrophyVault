@@ -39,6 +39,12 @@ fn main() -> eframe::Result<()> {
 
     let native_options = eframe::NativeOptions {
         viewport,
+        vsync: false,
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            power_preference: eframe::wgpu::PowerPreference::HighPerformance,
+            present_mode: eframe::wgpu::PresentMode::AutoVsync,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

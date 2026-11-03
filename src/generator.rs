@@ -3,7 +3,7 @@
 use crate::data::{AchievementsData, GameItem};
 use crate::icons::*;
 use resvg::tiny_skia;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use usvg::fontdb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,7 +268,7 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
 
   <!-- CLEAN FOOTER -->
   <g transform="translate(55, 805)">
-    <text x="0" y="0" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="900" fill="{primary}" letter-spacing="2">ACHIEVEMENTS PASSPORT</text>
+    <text x="0" y="0" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="900" fill="{primary}" letter-spacing="2">TROPHYVAULT</text>
     <text x="1090" y="0" text-anchor="end" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="14" font-weight="600" fill="#6a829e">PASSPORT ID: {username} • VERIFIED GAMING RECORD</text>
   </g>
 </svg>"##,
@@ -474,7 +474,7 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
 
   <!-- CLEAN FOOTER -->
   <g transform="translate(55, 805)">
-    <text x="0" y="0" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="900" fill="{primary}" letter-spacing="2">ACHIEVEMENTS PASSPORT</text>
+    <text x="0" y="0" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="900" fill="{primary}" letter-spacing="2">TROPHYVAULT</text>
     <text x="1090" y="0" text-anchor="end" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="14" font-weight="600" fill="#6a829e">PASSPORT ID: {username} • VERIFIED GAMING RECORD</text>
   </g>
 </svg>"##,
@@ -520,14 +520,24 @@ fn format_number(val: u32) -> String {
     out
 }
 
-/// Renders an SVG string into high-resolution PNG bytes using resvg.
-pub fn render_svg_to_png(svg_str: &str, width: u32, height: u32) -> Result<Vec<u8>, String> {
-    let mut fontdb = fontdb::Database::new();
-    fontdb.load_system_fonts();
+static FONT_DB: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
 
+/// Cached system font database to avoid rescanning disk fonts on every render.
+pub fn get_font_db() -> Arc<fontdb::Database> {
+    FONT_DB
+        .get_or_init(|| {
+            let mut db = fontdb::Database::new();
+            db.load_system_fonts();
+            Arc::new(db)
+        })
+        .clone()
+}
+
+/// Renders an SVG string into a raw tiny_skia Pixmap buffer using resvg.
+pub fn render_svg_to_pixmap(svg_str: &str, width: u32, height: u32) -> Result<tiny_skia::Pixmap, String> {
     let mut opt = usvg::Options::default();
     opt.font_family = "sans-serif".to_string();
-    opt.fontdb = Arc::new(fontdb);
+    opt.fontdb = get_font_db();
 
     let tree = usvg::Tree::from_str(svg_str, &opt)
         .map_err(|e| format!("Failed to parse SVG: {}", e))?;
@@ -536,7 +546,12 @@ pub fn render_svg_to_png(svg_str: &str, width: u32, height: u32) -> Result<Vec<u
         .ok_or_else(|| "Failed to allocate pixel map buffer".to_string())?;
 
     resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
+    Ok(pixmap)
+}
 
+/// Renders an SVG string into high-resolution PNG bytes using resvg.
+pub fn render_svg_to_png(svg_str: &str, width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let pixmap = render_svg_to_pixmap(svg_str, width, height)?;
     pixmap
         .encode_png()
         .map_err(|e| format!("Failed to encode PNG: {}", e))

@@ -113,21 +113,49 @@ pub struct SyncReport {
     pub details: Vec<String>,
 }
 
-/// Resolves the absolute path to `library_database.json` in `%APPDATA%\AchievementsPassport`.
-pub fn get_database_path() -> PathBuf {
+/// Base directory for TrophyVault application data in `%APPDATA%\TrophyVault`.
+pub fn get_app_data_dir() -> PathBuf {
     if let Ok(appdata) = std::env::var("APPDATA") {
-        return PathBuf::from(appdata)
-            .join("AchievementsPassport")
-            .join("library_database.json");
+        return PathBuf::from(appdata).join("TrophyVault");
     }
 
     if let Some(config_dir) = dirs::config_dir() {
-        return config_dir
-            .join("AchievementsPassport")
-            .join("library_database.json");
+        return config_dir.join("TrophyVault");
     }
 
-    PathBuf::from("AchievementsPassport").join("library_database.json")
+    PathBuf::from("TrophyVault")
+}
+
+/// Legacy directory used by earlier versions (`%APPDATA%\AchievementsPassport`).
+pub fn get_legacy_app_data_dir() -> PathBuf {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return PathBuf::from(appdata).join("AchievementsPassport");
+    }
+
+    if let Some(config_dir) = dirs::config_dir() {
+        return config_dir.join("AchievementsPassport");
+    }
+
+    PathBuf::from("AchievementsPassport")
+}
+
+/// Resolves the absolute path to `library_database.json` for a specific Steam user account.
+/// E.g. `%APPDATA%\TrophyVault\<steam_id>\library_database.json`.
+/// When `steam_id` is None, points to `%APPDATA%\TrophyVault\library_database.json`.
+pub fn get_database_path_for_user(steam_id: Option<&str>) -> PathBuf {
+    let app_dir = get_app_data_dir();
+    if let Some(id) = steam_id {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            return app_dir.join(trimmed).join("library_database.json");
+        }
+    }
+    app_dir.join("library_database.json")
+}
+
+/// Resolves the root or fallback database path.
+pub fn get_database_path() -> PathBuf {
+    get_database_path_for_user(None)
 }
 
 fn current_timestamp() -> u64 {
@@ -137,54 +165,86 @@ fn current_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
-/// Load the persistent database from disk or initialize it with default configs.
-pub fn load_or_create_database() -> LibraryDatabase {
-    let db_path = get_database_path();
+/// Sanitize and normalize database entries. Returns true if modified.
+fn sanitize_database(db: &mut LibraryDatabase) -> bool {
+    let mut changed = false;
 
+    // 1. Purge legacy cracked / emulator games (where platform == "steam" and source == "legacy")
+    let before_len = db.games.len();
+    db.games.retain(|_, g| {
+        !(g.source == "legacy" && g.platform.to_lowercase() == "steam")
+    });
+    if db.games.len() != before_len {
+        changed = true;
+    }
+
+    // 2. Normalize all Steam entries (official, LuaTools, HubCapTools, Steamidra) to platform: "Steam", source: "steam"
+    for g in db.games.values_mut() {
+        let plat_lower = g.platform.to_lowercase();
+        if plat_lower.contains("steam")
+            && !plat_lower.contains("port")
+            && !plat_lower.contains("decomp")
+            && !plat_lower.contains("recomp")
+        {
+            if g.platform != "Steam" || g.source != "steam" {
+                g.platform = "Steam".to_string();
+                g.source = "steam".to_string();
+                changed = true;
+            }
+        }
+    }
+
+    changed
+}
+
+/// Load the persistent database for a specific Steam account, migrating from legacy root DB if needed.
+pub fn load_or_create_database_for_user(steam_id: Option<&str>) -> LibraryDatabase {
+    let db_path = get_database_path_for_user(steam_id);
+
+    // 1. If user-specific database already exists, load it
     if db_path.exists() {
         if let Ok(content) = fs::read_to_string(&db_path) {
             if let Ok(mut db) = serde_json::from_str::<LibraryDatabase>(&content) {
-                // Sanitize and normalize database entries
-                let mut changed = false;
-
-                // 1. Purge legacy cracked / emulator games (where platform == "steam" and source == "legacy")
-                let before_len = db.games.len();
-                db.games.retain(|_, g| {
-                    !(g.source == "legacy" && g.platform.to_lowercase() == "steam")
-                });
-                if db.games.len() != before_len {
-                    changed = true;
-                }
-
-                // 2. Normalize all Steam entries (official, LuaTools, HubCapTools, Steamidra) to platform: "Steam", source: "steam"
-                for g in db.games.values_mut() {
-                    let plat_lower = g.platform.to_lowercase();
-                    if plat_lower.contains("steam")
-                        && !plat_lower.contains("port")
-                        && !plat_lower.contains("decomp")
-                        && !plat_lower.contains("recomp")
-                    {
-                        if g.platform != "Steam" || g.source != "steam" {
-                            g.platform = "Steam".to_string();
-                            g.source = "steam".to_string();
-                            changed = true;
-                        }
-                    }
-                }
-
-                if changed {
-                    let _ = save_database(&db);
+                if sanitize_database(&mut db) {
+                    let _ = save_database_for_user(&db, steam_id);
                 }
                 return db;
             }
         }
     }
 
-    // Initialize fresh database
+    // 2. If user-specific DB does not exist, check for existing databases to migrate
+    let migration_candidates = [
+        steam_id.map(|id| get_legacy_app_data_dir().join(id).join("library_database.json")),
+        Some(get_app_data_dir().join("library_database.json")),
+        Some(get_legacy_app_data_dir().join("library_database.json")),
+    ];
+
+    for candidate_opt in &migration_candidates {
+        if let Some(candidate) = candidate_opt {
+            if candidate.exists() {
+                if let Ok(content) = fs::read_to_string(candidate) {
+                    if let Ok(mut db) = serde_json::from_str::<LibraryDatabase>(&content) {
+                        sanitize_database(&mut db);
+                        if let Some(id) = steam_id {
+                            db.preferences.steam_id = Some(id.to_string());
+                        }
+                        let _ = save_database_for_user(&db, steam_id);
+                        return db;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Initialize fresh isolated database for this user
     let mut db = LibraryDatabase {
         version: 1,
         last_updated: current_timestamp(),
-        preferences: DatabasePreferences::default(),
+        preferences: DatabasePreferences {
+            steam_id: steam_id.map(str::to_string),
+            ..DatabasePreferences::default()
+        },
         manual_games: vec![
             ManualGameSetting {
                 id: "bloodborne".to_string(),
@@ -202,9 +262,14 @@ pub fn load_or_create_database() -> LibraryDatabase {
     // Attempt to seed from legacy Achievements app if dashboard-summary.json exists
     seed_from_legacy_achievements(&mut db);
 
-    // Save initial DB
-    let _ = save_database(&db);
+    // Save initial DB for this user
+    let _ = save_database_for_user(&db, steam_id);
     db
+}
+
+/// Load the persistent database from disk or initialize it with default configs.
+pub fn load_or_create_database() -> LibraryDatabase {
+    load_or_create_database_for_user(None)
 }
 
 /// Seed database with existing games from PSerban93's Achievements app if present.
@@ -280,9 +345,10 @@ fn seed_from_legacy_achievements(db: &mut LibraryDatabase) {
     }
 }
 
-/// Save the database to `%APPDATA%\AchievementsPassport\library_database.json`.
-pub fn save_database(db: &LibraryDatabase) -> Result<(), String> {
-    let db_path = get_database_path();
+/// Save the database for a specific Steam user account.
+pub fn save_database_for_user(db: &LibraryDatabase, steam_id: Option<&str>) -> Result<(), String> {
+    let target_id = steam_id.or(db.preferences.steam_id.as_deref());
+    let db_path = get_database_path_for_user(target_id);
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create directory '{}': {}", parent.display(), e))?;
@@ -295,6 +361,11 @@ pub fn save_database(db: &LibraryDatabase) -> Result<(), String> {
         .map_err(|e| format!("Failed to write database file '{}': {}", db_path.display(), e))?;
 
     Ok(())
+}
+
+/// Save the database to the appropriate profile storage path based on `db.preferences.steam_id`.
+pub fn save_database(db: &LibraryDatabase) -> Result<(), String> {
+    save_database_for_user(db, db.preferences.steam_id.as_deref())
 }
 
 /// Run full library sync: scans configured manual games (Bloodborne),
@@ -588,7 +659,7 @@ pub fn database_to_achievements_data(db: &LibraryDatabase) -> AchievementsData {
     };
 
     AchievementsData {
-        base_path: get_database_path(),
+        base_path: get_database_path_for_user(db.preferences.steam_id.as_deref()),
         preferences: Preferences {
             steam_official_steam_id: db.preferences.steam_id.clone(),
             watched_folders: Vec::new(),

@@ -5,10 +5,14 @@ use crate::generator::{
     generate_passport_svg, render_svg_to_pixmap, render_svg_to_png, PassportOptions, PassportTheme,
 };
 use crate::storage::{
-    database_to_achievements_data, get_database_path, load_or_create_database, save_database,
+    database_to_achievements_data, get_database_path, get_database_path_for_user,
+    load_or_create_database, load_or_create_database_for_user, save_database,
     sync_library, LibraryDatabase, ManualGameSetting,
 };
-use crate::steam::{find_active_steam_id, find_steam_dir, parse_non_steam_shortcuts, NonSteamShortcut};
+use crate::steam::{
+    detect_steam_users, find_active_steam_id, find_steam_dir, parse_non_steam_shortcuts,
+    NonSteamShortcut, SteamUserAccount,
+};
 use eframe::egui;
 use std::fs;
 use std::path::PathBuf;
@@ -30,6 +34,12 @@ pub struct PassportApp {
     db: LibraryDatabase,
     data: Option<AchievementsData>,
     active_tab: AppTab,
+
+    // Multi-User Profile State
+    detected_users: Vec<SteamUserAccount>,
+    current_steam_id: Option<String>,
+    custom_steam_id_input: String,
+    show_custom_id_popup: bool,
 
     // Options for Canvas
     mode: PassportMode,
@@ -66,8 +76,36 @@ impl PassportApp {
         visuals.window_fill = egui::Color32::from_rgb(7, 24, 41);
         cc.egui_ctx.set_visuals(visuals);
 
-        let mut db = load_or_create_database();
-        // Sync database on startup
+        let steam_dir = find_steam_dir();
+        let detected_users = if let Some(s_dir) = &steam_dir {
+            detect_steam_users(s_dir)
+        } else {
+            Vec::new()
+        };
+
+        // Determine active Steam account
+        let active_user = detected_users
+            .iter()
+            .find(|u| u.is_most_recent)
+            .or_else(|| detected_users.iter().find(|u| u.steam_id == "462943940"))
+            .or_else(|| detected_users.first());
+
+        let initial_steam_id = active_user.map(|u| u.steam_id.clone());
+
+        // Load isolated database for this specific user
+        let mut db = load_or_create_database_for_user(initial_steam_id.as_deref());
+        if db.preferences.steam_id.is_none() {
+            db.preferences.steam_id = initial_steam_id.clone();
+        }
+
+        // If user has a persona name and DB username is default, initialize with persona
+        if let Some(user) = active_user {
+            if db.preferences.username == "MOHANDL3G" && user.persona_name != "MOHANDL3G" {
+                db.preferences.username = user.persona_name.clone();
+            }
+        }
+
+        // Sync database on startup for this user
         let _report = sync_library(&mut db);
 
         let username = db.preferences.username.clone();
@@ -90,6 +128,11 @@ impl PassportApp {
             db,
             data: None,
             active_tab: AppTab::Canvas,
+
+            detected_users,
+            current_steam_id: initial_steam_id,
+            custom_steam_id_input: String::new(),
+            show_custom_id_popup: false,
 
             mode: PassportMode::Overall,
             selected_game_name: "Bloodborne (PC Recomp)".to_string(),
@@ -240,18 +283,96 @@ impl PassportApp {
         }
     }
 
+    pub fn current_account_display_name(&self) -> String {
+        if let Some(current_id) = &self.current_steam_id {
+            if let Some(user) = self.detected_users.iter().find(|u| &u.steam_id == current_id) {
+                format!("{} ({})", user.persona_name, user.steam_id)
+            } else {
+                format!("Steam ID {}", current_id)
+            }
+        } else {
+            "Default Profile".to_string()
+        }
+    }
+
+    pub fn switch_user_profile(&mut self, new_steam_id: Option<String>, ctx: &egui::Context) {
+        if self.current_steam_id == new_steam_id {
+            return;
+        }
+
+        // 1. Save previous database
+        if let Err(e) = save_database(&self.db) {
+            self.status_notification = Some((format!("Failed to save previous profile: {}", e), true));
+        }
+
+        // 2. Load newly selected user's isolated database
+        self.current_steam_id = new_steam_id.clone();
+        self.db = load_or_create_database_for_user(new_steam_id.as_deref());
+        if self.db.preferences.steam_id.is_none() {
+            self.db.preferences.steam_id = new_steam_id.clone();
+        }
+
+        // 3. Update active UI state from new profile
+        if let Some(user) = self
+            .detected_users
+            .iter()
+            .find(|u| Some(&u.steam_id) == self.current_steam_id.as_ref())
+        {
+            if self.db.preferences.username == "MOHANDL3G" && user.persona_name != "MOHANDL3G" {
+                self.db.preferences.username = user.persona_name.clone();
+            }
+        }
+        self.username = self.db.preferences.username.clone();
+        self.title_line = self.db.preferences.title_line.clone();
+        self.theme = match self.db.preferences.theme.as_str() {
+            "TrophyGold" => PassportTheme::TrophyGold,
+            "BloodborneCrimson" => PassportTheme::BloodborneCrimson,
+            "EmeraldMatrix" => PassportTheme::EmeraldMatrix,
+            "SteamPurple" => PassportTheme::SteamPurple,
+            _ => PassportTheme::CyberpunkCyan,
+        };
+
+        // 4. Sync library for new profile
+        let report = sync_library(&mut self.db);
+
+        // 5. Rebuild cached keys & refresh preview
+        self.rebuild_cached_db_keys();
+        self.refresh_data_and_preview(ctx);
+
+        let display_name = self.current_account_display_name();
+        self.status_notification = Some((
+            format!(
+                "✓ Switched profile to: {} ({} games loaded)",
+                display_name, report.total_games
+            ),
+            false,
+        ));
+    }
+
     fn detect_steam_shortcuts(&mut self) {
         if let Some(s_dir) = find_steam_dir() {
-            if let Some(s_id) = find_active_steam_id(&s_dir) {
+            let active_id = self
+                .current_steam_id
+                .as_deref()
+                .or_else(|| self.db.preferences.steam_id.as_deref());
+            let target_id = active_id
+                .map(str::to_string)
+                .or_else(|| find_active_steam_id(&s_dir));
+
+            if let Some(s_id) = target_id {
                 self.detected_shortcuts = parse_non_steam_shortcuts(&s_dir, &s_id);
                 if self.detected_shortcuts.is_empty() {
                     self.status_notification = Some((
-                        "No Non-Steam shortcuts found in Steam config".to_string(),
+                        format!("No Non-Steam shortcuts found in Steam config for account {}", s_id),
                         false,
                     ));
                 } else {
                     self.status_notification = Some((
-                        format!("Found {} Non-Steam shortcut(s)", self.detected_shortcuts.len()),
+                        format!(
+                            "Found {} Non-Steam shortcut(s) for account {}",
+                            self.detected_shortcuts.len(),
+                            s_id
+                        ),
                         false,
                     ));
                 }
@@ -283,7 +404,50 @@ impl eframe::App for PassportApp {
                         .monospace(),
                 );
 
-                ui.add_space(20.0);
+                ui.add_space(15.0);
+
+                // Profile Switcher Dropdown
+                let current_label = self.current_account_display_name();
+                let mut switched_profile: Option<Option<String>> = None;
+                let mut open_custom_popup = false;
+
+                egui::ComboBox::from_id_salt("header_profile_switcher")
+                    .selected_text(
+                        egui::RichText::new(format!("👤 {}", current_label))
+                            .color(egui::Color32::from_rgb(255, 215, 0))
+                            .size(13.0)
+                            .strong(),
+                    )
+                    .show_ui(ui, |ui| {
+                        ui.label(egui::RichText::new("Steam Accounts").size(11.0).weak());
+                        for user in &self.detected_users {
+                            let is_sel = self.current_steam_id.as_deref() == Some(&user.steam_id);
+                            let item_label = if user.is_most_recent {
+                                format!("★ {} ({})", user.persona_name, user.steam_id)
+                            } else {
+                                format!("👤 {} ({})", user.persona_name, user.steam_id)
+                            };
+
+                            if ui.selectable_label(is_sel, item_label).clicked() {
+                                switched_profile = Some(Some(user.steam_id.clone()));
+                            }
+                        }
+                        if !self.detected_users.is_empty() {
+                            ui.separator();
+                        }
+                        if ui.selectable_label(false, "➕ Custom Steam ID...").clicked() {
+                            open_custom_popup = true;
+                        }
+                    });
+
+                if let Some(target_id) = switched_profile {
+                    self.switch_user_profile(target_id, ctx);
+                }
+                if open_custom_popup {
+                    self.show_custom_id_popup = true;
+                }
+
+                ui.add_space(15.0);
 
                 // Navigation Tabs
                 if ui
@@ -342,6 +506,49 @@ impl eframe::App for PassportApp {
 
             ui.add_space(6.0);
         });
+
+        if self.show_custom_id_popup {
+            let mut close_popup = false;
+            let mut custom_target: Option<String> = None;
+
+            egui::Window::new("➕ Switch to Custom Steam ID")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.add_space(4.0);
+                    ui.label("Enter numeric Steam32 Account ID (e.g. 462943940) or Steam64 Community ID (e.g. 76561198423209668):");
+                    ui.add_space(6.0);
+                    ui.text_edit_singleline(&mut self.custom_steam_id_input);
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Confirm").clicked() {
+                            let trimmed = self.custom_steam_id_input.trim();
+                            if let Ok(s64) = trimmed.parse::<u64>() {
+                                if let Some(s32) = crate::steam::steam64_to_steam32(s64) {
+                                    custom_target = Some(s32.to_string());
+                                } else {
+                                    custom_target = Some(s64.to_string());
+                                }
+                            } else if !trimmed.is_empty() {
+                                custom_target = Some(trimmed.to_string());
+                            }
+                            close_popup = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            close_popup = true;
+                        }
+                    });
+                });
+
+            if let Some(target) = custom_target {
+                self.switch_user_profile(Some(target), ctx);
+                self.custom_steam_id_input.clear();
+            }
+            if close_popup {
+                self.show_custom_id_popup = false;
+            }
+        }
 
         match self.active_tab {
             AppTab::Canvas => self.show_canvas_tab(ctx),
@@ -767,12 +974,23 @@ impl PassportApp {
                         .strong(),
                 );
 
-                let db_path = get_database_path();
-                ui.label(format!("Database Path: {}", db_path.display()));
+                let db_path = get_database_path_for_user(self.current_steam_id.as_deref());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Active Profile: {}",
+                            self.current_account_display_name()
+                        ))
+                        .color(egui::Color32::from_rgb(255, 215, 0))
+                        .strong(),
+                    );
+                    ui.label("•");
+                    ui.label(format!("Path: {}", db_path.display()));
+                });
 
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if ui.button("📂 Open Database Folder").clicked() {
+                    if ui.button("📂 Open Profile Folder").clicked() {
                         if let Some(parent) = db_path.parent() {
                             let _ = open::that(parent);
                         }

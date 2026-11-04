@@ -34,6 +34,7 @@ pub struct DatabasePreferences {
     pub theme: String,
     pub steam_path: Option<String>,
     pub steam_id: Option<String>,
+    pub export_path: Option<String>,
     #[serde(default = "default_true")]
     pub auto_sync: bool,
 }
@@ -59,6 +60,7 @@ impl Default for DatabasePreferences {
             theme: default_theme(),
             steam_path: None,
             steam_id: None,
+            export_path: None,
             auto_sync: true,
         }
     }

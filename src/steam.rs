@@ -51,40 +51,224 @@ pub fn find_steam_dir() -> Option<PathBuf> {
     None
 }
 
-/// Detect the active Steam user ID from the `userdata` directory.
-pub fn find_active_steam_id(steam_dir: &Path) -> Option<String> {
-    let userdata = steam_dir.join("userdata");
-    if !userdata.exists() {
-        return None;
+/// Base constant used to convert between Steam64 (Community ID) and Steam32 (Account ID).
+pub const STEAM64_BASE: u64 = 76561197960265728;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SteamUserAccount {
+    pub steam_id: String,           // 32-bit Account ID (matches userdata/<id>)
+    pub steam64_id: Option<String>,  // 64-bit Community ID
+    pub persona_name: String,       // Player display name
+    pub account_name: Option<String>,
+    pub is_most_recent: bool,
+    pub last_login_time: Option<u64>,
+}
+
+/// Convert Steam64 Community ID to Steam32 Account ID.
+pub fn steam64_to_steam32(steam64: u64) -> Option<u32> {
+    if steam64 > STEAM64_BASE {
+        Some((steam64 - STEAM64_BASE) as u32)
+    } else {
+        None
     }
+}
 
-    let mut candidate_ids: Vec<(String, std::time::SystemTime)> = Vec::new();
+/// Convert Steam32 Account ID to Steam64 Community ID.
+pub fn steam32_to_steam64(steam32: u32) -> u64 {
+    STEAM64_BASE + (steam32 as u64)
+}
 
-    if let Ok(entries) = fs::read_dir(&userdata) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    // Check if numeric
-                    if name.chars().all(|c| c.is_ascii_digit()) && name != "0" {
-                        let modified = fs::metadata(&path)
-                            .and_then(|m| m.modified())
-                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                        candidate_ids.push((name.to_string(), modified));
+/// Parse `loginusers.vdf` content to extract all user accounts registered with Steam.
+pub fn parse_loginusers_vdf(content: &str) -> Vec<SteamUserAccount> {
+    let mut accounts = Vec::new();
+    let mut current_steam64: Option<String> = None;
+    let mut current_persona: Option<String> = None;
+    let mut current_account: Option<String> = None;
+    let mut current_most_recent = false;
+    let mut current_timestamp: Option<u64> = None;
+    let mut in_users_section = false;
+    let mut depth: usize = 0;
+    let mut user_depth: usize = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed == "{" {
+            depth += 1;
+            continue;
+        } else if trimmed == "}" {
+            if let Some(s64) = current_steam64.take() {
+                if depth == user_depth {
+                    if let Ok(s64_num) = s64.parse::<u64>() {
+                        if let Some(s32_num) = steam64_to_steam32(s64_num) {
+                            let persona = current_persona
+                                .take()
+                                .filter(|p| !p.trim().is_empty())
+                                .unwrap_or_else(|| format!("Steam User {}", s32_num));
+
+                            accounts.push(SteamUserAccount {
+                                steam_id: s32_num.to_string(),
+                                steam64_id: Some(s64),
+                                persona_name: persona,
+                                account_name: current_account.take(),
+                                is_most_recent: current_most_recent,
+                                last_login_time: current_timestamp.take(),
+                            });
+                        }
+                    }
+                    current_most_recent = false;
+                }
+            }
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                in_users_section = false;
+            }
+            continue;
+        }
+
+        if !in_users_section {
+            if trimmed.eq_ignore_ascii_case(r#""users""#) {
+                in_users_section = true;
+            }
+            continue;
+        }
+
+        // Inside "users" block: A user block header is a numeric 64-bit ID e.g. "76561198423209668"
+        if depth == 1 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+            let key = trimmed.trim_matches('"');
+            if key.chars().all(|c| c.is_ascii_digit()) && key.len() >= 16 {
+                current_steam64 = Some(key.to_string());
+                user_depth = 2;
+                current_persona = None;
+                current_account = None;
+                current_most_recent = false;
+                current_timestamp = None;
+            }
+            continue;
+        }
+
+        // Inside a user object
+        if current_steam64.is_some() {
+            let tokens: Vec<&str> = trimmed
+                .split('"')
+                .filter(|s| !s.trim().is_empty())
+                .collect();
+
+            if tokens.len() >= 2 {
+                let k = tokens[0].trim();
+                let v = tokens[1].trim();
+
+                if k.eq_ignore_ascii_case("PersonaName") {
+                    current_persona = Some(v.to_string());
+                } else if k.eq_ignore_ascii_case("AccountName") {
+                    current_account = Some(v.to_string());
+                } else if k.eq_ignore_ascii_case("MostRecent") {
+                    current_most_recent = v == "1";
+                } else if k.eq_ignore_ascii_case("Timestamp") {
+                    current_timestamp = v.parse::<u64>().ok();
+                }
+            } else if tokens.len() == 1 && trimmed.starts_with('"') {
+                let k = tokens[0].trim();
+                if let Some(second_quote_idx) = trimmed[1..].find('"') {
+                    let remainder = trimmed[second_quote_idx + 2..].trim();
+                    if !remainder.is_empty() {
+                        if k.eq_ignore_ascii_case("MostRecent") {
+                            current_most_recent = remainder == "1";
+                        } else if k.eq_ignore_ascii_case("Timestamp") {
+                            current_timestamp = remainder.parse::<u64>().ok();
+                        }
                     }
                 }
             }
         }
     }
 
-    // Sort by most recently modified
-    candidate_ids.sort_by(|a, b| b.1.cmp(&a.1));
+    accounts
+}
 
-    // Prefer 462943940 if present, else most recent
-    if let Some((id, _)) = candidate_ids.iter().find(|(id, _)| id == "462943940") {
-        Some(id.clone())
+/// Detect all Steam user accounts present in the Steam installation.
+/// Reads `config/loginusers.vdf` and inspects `userdata/` directory.
+pub fn detect_steam_users(steam_dir: &Path) -> Vec<SteamUserAccount> {
+    let mut accounts: Vec<SteamUserAccount> = Vec::new();
+    let mut known_steam32: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // 1. Try to read config/loginusers.vdf
+    let loginusers_paths = [
+        steam_dir.join("config").join("loginusers.vdf"),
+        steam_dir.join("loginusers.vdf"),
+    ];
+
+    for path in &loginusers_paths {
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(path) {
+                let parsed = parse_loginusers_vdf(&content);
+                for acc in parsed {
+                    if !known_steam32.contains(&acc.steam_id) {
+                        known_steam32.insert(acc.steam_id.clone());
+                        accounts.push(acc);
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    // 2. Scan userdata/ directories to catch any additional accounts
+    let userdata = steam_dir.join("userdata");
+    if userdata.exists() {
+        if let Ok(entries) = fs::read_dir(&userdata) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    if let Some(folder_name) = p.file_name().and_then(|n| n.to_str()) {
+                        if folder_name.chars().all(|c| c.is_ascii_digit()) && folder_name != "0" {
+                            if !known_steam32.contains(folder_name) {
+                                let steam32_val = folder_name.parse::<u32>().ok();
+                                let steam64_str = steam32_val.map(|s| steam32_to_steam64(s).to_string());
+                                let modified_sec = fs::metadata(&p)
+                                    .and_then(|m| m.modified())
+                                    .ok()
+                                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                    .map(|d| d.as_secs());
+
+                                accounts.push(SteamUserAccount {
+                                    steam_id: folder_name.to_string(),
+                                    steam64_id: steam64_str,
+                                    persona_name: format!("Steam User {}", folder_name),
+                                    account_name: None,
+                                    is_most_recent: false,
+                                    last_login_time: modified_sec,
+                                });
+                                known_steam32.insert(folder_name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Sort: MostRecent == true first, then last login descending, then persona name
+    accounts.sort_by(|a, b| {
+        b.is_most_recent
+            .cmp(&a.is_most_recent)
+            .then_with(|| b.last_login_time.cmp(&a.last_login_time))
+            .then_with(|| a.persona_name.cmp(&b.persona_name))
+    });
+
+    accounts
+}
+
+/// Detect the active Steam user ID from `loginusers.vdf` or `userdata/`.
+pub fn find_active_steam_id(steam_dir: &Path) -> Option<String> {
+    let users = detect_steam_users(steam_dir);
+    // Prefer the active/most recent account, with fallback to 462943940 if present
+    if let Some(user) = users.iter().find(|u| u.is_most_recent) {
+        Some(user.steam_id.clone())
+    } else if let Some(user) = users.iter().find(|u| u.steam_id == "462943940") {
+        Some(user.steam_id.clone())
     } else {
-        candidate_ids.first().map(|(id, _)| id.clone())
+        users.first().map(|u| u.steam_id.clone())
     }
 }
 

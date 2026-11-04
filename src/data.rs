@@ -105,29 +105,12 @@ pub fn default_achievements_dir() -> PathBuf {
     PathBuf::from(".")
 }
 
-/// Attempt to read the Steam persona name from loginusers.vdf
+/// Attempt to read the Steam persona name from detected Steam accounts
 fn resolve_steam_persona(steam_id: &str) -> Option<String> {
-    let candidates = [
-        PathBuf::from(r"C:\Program Files (x86)\Steam\config\loginusers.vdf"),
-        PathBuf::from(r"C:\Program Files\Steam\config\loginusers.vdf"),
-    ];
-
-    for path in &candidates {
-        if let Ok(content) = fs::read_to_string(path) {
-            // Find the block for this steam_id
-            if let Some(id_pos) = content.find(steam_id) {
-                let slice = &content[id_pos..];
-                if let Some(persona_pos) = slice.find(r#""PersonaName""#) {
-                    let after = &slice[persona_pos + 13..];
-                    let parts: Vec<&str> = after.split('"').collect();
-                    if parts.len() >= 2 {
-                        let name = parts[1].trim();
-                        if !name.is_empty() {
-                            return Some(name.to_string());
-                        }
-                    }
-                }
-            }
+    if let Some(s_dir) = crate::steam::find_steam_dir() {
+        let users = crate::steam::detect_steam_users(&s_dir);
+        if let Some(user) = users.iter().find(|u| u.steam_id == steam_id) {
+            return Some(user.persona_name.clone());
         }
     }
     None

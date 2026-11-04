@@ -119,10 +119,18 @@ impl PassportApp {
             _ => PassportTheme::CyberpunkCyan,
         };
 
-        let default_output = dirs::picture_dir()
-            .or_else(dirs::desktop_dir)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("achievements_passport.png");
+        let default_output = db
+            .preferences
+            .export_path
+            .as_deref()
+            .map(PathBuf::from)
+            .filter(|p| !p.ends_with("achievements_passport.png"))
+            .unwrap_or_else(|| {
+                dirs::picture_dir()
+                    .or_else(dirs::desktop_dir)
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("TrophyVault.png")
+            });
 
         let mut app = Self {
             db,
@@ -331,6 +339,10 @@ impl PassportApp {
             "SteamPurple" => PassportTheme::SteamPurple,
             _ => PassportTheme::CyberpunkCyan,
         };
+
+        if let Some(p) = &self.db.preferences.export_path {
+            self.output_path = PathBuf::from(p);
+        }
 
         // 4. Sync library for new profile
         let report = sync_library(&mut self.db);
@@ -550,6 +562,43 @@ impl eframe::App for PassportApp {
             }
         }
 
+        // BOTTOM PANEL: About & GitHub Link (Issue #18)
+        egui::TopBottomPanel::bottom("app_footer_bar").show(ctx, |ui| {
+            ui.add_space(3.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("🏆 TrophyVault")
+                        .color(egui::Color32::from_rgb(0, 240, 255))
+                        .strong()
+                        .size(12.0),
+                );
+                ui.label(
+                    egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                        .color(egui::Color32::from_rgb(130, 170, 210))
+                        .monospace()
+                        .size(11.0),
+                );
+                ui.label("•");
+                ui.hyperlink_to(
+                    egui::RichText::new("GitHub Repository ↗")
+                        .color(egui::Color32::from_rgb(88, 166, 255))
+                        .size(11.0),
+                    "https://github.com/MohandL3G/TrophyVault",
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(active_id) = &self.current_steam_id {
+                        ui.label(
+                            egui::RichText::new(format!("Active Steam ID: {}", active_id))
+                                .color(egui::Color32::from_rgb(120, 150, 180))
+                                .size(11.0),
+                        );
+                    }
+                });
+            });
+            ui.add_space(3.0);
+        });
+
         match self.active_tab {
             AppTab::Canvas => self.show_canvas_tab(ctx),
             AppTab::CustomGames => self.show_custom_games_tab(ctx),
@@ -723,14 +772,19 @@ impl PassportApp {
                         ui.horizontal(|ui| {
                             let mut path_str = self.output_path.to_string_lossy().to_string();
                             if ui.text_edit_singleline(&mut path_str).changed() {
-                                self.output_path = PathBuf::from(path_str);
+                                self.output_path = PathBuf::from(&path_str);
+                                self.db.preferences.export_path = Some(path_str);
+                                let _ = save_database(&self.db);
                             }
                             if ui.button("Browse…").clicked() {
                                 if let Some(path) = rfd::FileDialog::new()
-                                    .set_file_name("achievements_passport.png")
+                                    .set_file_name("TrophyVault.png")
                                     .save_file()
                                 {
-                                    self.output_path = path;
+                                    self.output_path = path.clone();
+                                    self.db.preferences.export_path =
+                                        Some(path.to_string_lossy().to_string());
+                                    let _ = save_database(&self.db);
                                 }
                             }
                         });
@@ -738,7 +792,10 @@ impl PassportApp {
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             if ui
-                                .add_sized([150.0, 36.0], egui::Button::new("📸 Export PNG (1200×850)"))
+                                .add_sized(
+                                    [150.0, 36.0],
+                                    egui::Button::new("📸 Export PNG (1200×850)"),
+                                )
                                 .clicked()
                             {
                                 self.save_png(ctx);
@@ -750,6 +807,35 @@ impl PassportApp {
                                 self.save_svg();
                             }
                         });
+                    });
+
+                    ui.add_space(10.0);
+
+                    // --- ABOUT (Bottom-Left) ---
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("ℹ About TrophyVault")
+                                    .strong()
+                                    .color(egui::Color32::from_rgb(0, 240, 255)),
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.hyperlink_to(
+                                    egui::RichText::new("GitHub ↗")
+                                        .color(egui::Color32::from_rgb(88, 166, 255)),
+                                    "https://github.com/MohandL3G/TrophyVault",
+                                );
+                            });
+                        });
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Version {} • Built with Rust & egui/glow",
+                                env!("CARGO_PKG_VERSION")
+                            ))
+                            .weak()
+                            .size(11.0),
+                        );
                     });
 
                     ui.add_space(20.0);
@@ -965,134 +1051,218 @@ impl PassportApp {
 
     fn show_database_tab(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(8.0);
+            ui.add_space(8.0);
 
-                ui.heading(
-                    egui::RichText::new("📚 Persistent Library Database")
-                        .color(egui::Color32::from_rgb(0, 240, 255))
-                        .strong(),
-                );
+            ui.heading(
+                egui::RichText::new("📚 Persistent Library Database")
+                    .color(egui::Color32::from_rgb(0, 240, 255))
+                    .strong(),
+            );
 
-                let db_path = get_database_path_for_user(self.current_steam_id.as_deref());
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "Active Profile: {}",
-                            self.current_account_display_name()
-                        ))
-                        .color(egui::Color32::from_rgb(255, 215, 0))
-                        .strong(),
-                    );
-                    ui.label("•");
-                    ui.label(format!("Path: {}", db_path.display()));
-                });
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if ui.button("📂 Open Profile Folder").clicked() {
-                        if let Some(parent) = db_path.parent() {
-                            let _ = open::that(parent);
-                        }
-                    }
-                    if ui.button("🔄 Sync Library Now").clicked() {
-                        self.run_sync(ctx);
-                    }
-                });
-
-                ui.add_space(6.0);
+            let db_path = get_database_path_for_user(self.current_steam_id.as_deref());
+            ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new(
-                        "🛡 Retention Guarantee: Games in this database will NEVER be deleted automatically, even if you delete the game folder or remove the LuaTools script. Only manual deletion will remove an entry.",
-                    )
-                    .color(egui::Color32::from_rgb(140, 200, 255))
-                    .italics(),
+                    egui::RichText::new(format!(
+                        "Active Profile: {}",
+                        self.current_account_display_name()
+                    ))
+                    .color(egui::Color32::from_rgb(255, 215, 0))
+                    .strong(),
                 );
+                ui.label("•");
+                ui.label(format!("Path: {}", db_path.display()));
+            });
 
-                ui.add_space(10.0);
-
-                // Search Filter
-                ui.horizontal(|ui| {
-                    ui.label("Filter Games:");
-                    ui.text_edit_singleline(&mut self.db_search_query);
-                });
-
-                ui.add_space(10.0);
-
-                // Table of Games (Optimized with cached keys and virtual row windowing)
-                let query = self.db_search_query.to_lowercase();
-                let filtered_keys: Vec<&String> = self
-                    .cached_db_keys
-                    .iter()
-                    .filter(|key| {
-                        if query.is_empty() {
-                            true
-                        } else if let Some(game) = self.db.games.get(*key) {
-                            game.name.to_lowercase().contains(&query)
-                                || game.platform.to_lowercase().contains(&query)
-                        } else {
-                            false
-                        }
-                    })
-                    .collect();
-
-                let mut to_delete_key: Option<String> = None;
-                let row_height = 24.0;
-                let total_rows = filtered_keys.len();
-
-                egui::Grid::new("db_games_grid_header")
-                    .striped(true)
-                    .min_col_width(80.0)
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new("Game Title").strong());
-                        ui.label(egui::RichText::new("Platform").strong());
-                        ui.label(egui::RichText::new("App ID").strong());
-                        ui.label(egui::RichText::new("Achievements").strong());
-                        ui.label(egui::RichText::new("Progress").strong());
-                        ui.label(egui::RichText::new("Playtime").strong());
-                        ui.label(egui::RichText::new("Source").strong());
-                        ui.label(egui::RichText::new("Actions").strong());
-                        ui.end_row();
-                    });
-
-                egui::ScrollArea::vertical()
-                    .max_height(550.0)
-                    .show_rows(ui, row_height, total_rows, |ui, row_range| {
-                        egui::Grid::new("db_games_grid_body")
-                            .striped(true)
-                            .min_col_width(80.0)
-                            .show(ui, |ui| {
-                                for idx in row_range {
-                                    let key = filtered_keys[idx];
-                                    if let Some(game) = self.db.games.get(key) {
-                                        ui.label(&game.name);
-                                        ui.label(&game.platform);
-                                        ui.label(game.appid.as_deref().unwrap_or("—"));
-                                        ui.label(format!("{}/{}", game.unlocked, game.total));
-                                        ui.label(format!("{}%", game.pct));
-                                        ui.label(format!(
-                                            "{}h {}m",
-                                            game.playtime_minutes / 60,
-                                            game.playtime_minutes % 60
-                                        ));
-                                        ui.label(&game.source);
-
-                                        if ui.button("🗑 Delete").clicked() {
-                                            to_delete_key = Some(key.clone());
-                                        }
-                                        ui.end_row();
-                                    }
-                                }
-                            });
-                    });
-
-                if let Some(key) = to_delete_key {
-                    self.db.games.remove(&key);
-                    let _ = save_database(&self.db);
-                    self.rebuild_cached_db_keys();
-                    self.refresh_data_and_preview(ctx);
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button("📂 Open Profile Folder").clicked() {
+                    if let Some(parent) = db_path.parent() {
+                        let _ = open::that(parent);
+                    }
+                }
+                if ui.button("🔄 Sync Library Now").clicked() {
+                    self.run_sync(ctx);
                 }
             });
+
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(
+                    "🛡 Retention Guarantee: Games in this database will NEVER be deleted automatically, even if you delete the game folder or remove the LuaTools script. Only manual deletion will remove an entry.",
+                )
+                .color(egui::Color32::from_rgb(140, 200, 255))
+                .italics(),
+            );
+
+            ui.add_space(8.0);
+
+            // Search Filter
+            ui.horizontal(|ui| {
+                ui.label("Filter Games:");
+                ui.text_edit_singleline(&mut self.db_search_query);
+            });
+
+            ui.add_space(8.0);
+
+            // Table of Games (Optimized with cached keys and virtual row windowing, scaling dynamically to full width and height)
+            let query = self.db_search_query.to_lowercase();
+            let filtered_keys: Vec<&String> = self
+                .cached_db_keys
+                .iter()
+                .filter(|key| {
+                    if query.is_empty() {
+                        true
+                    } else if let Some(game) = self.db.games.get(*key) {
+                        game.name.to_lowercase().contains(&query)
+                            || game.platform.to_lowercase().contains(&query)
+                    } else {
+                        false
+                    }
+                })
+                .collect();
+
+            let mut to_delete_key: Option<String> = None;
+            let row_height = 24.0;
+            let total_rows = filtered_keys.len();
+
+            let avail_w = ui.available_width().max(880.0);
+            let col_platform = 120.0;
+            let col_appid = 90.0;
+            let col_ach = 105.0;
+            let col_pct = 80.0;
+            let col_playtime = 95.0;
+            let col_source = 85.0;
+            let col_action = 80.0;
+            let fixed_sum = col_platform + col_appid + col_ach + col_pct + col_playtime + col_source + col_action;
+            let col_title = (avail_w - fixed_sum - 35.0).max(240.0);
+
+            // Header Row (Matches Body Column Sizes Exactly)
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [col_title, 22.0],
+                    egui::Label::new(
+                        egui::RichText::new("Game Title")
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    ),
+                );
+                ui.add_sized(
+                    [col_platform, 22.0],
+                    egui::Label::new(
+                        egui::RichText::new("Platform")
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    ),
+                );
+                ui.add_sized(
+                    [col_appid, 22.0],
+                    egui::Label::new(
+                        egui::RichText::new("App ID")
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    ),
+                );
+                ui.add_sized(
+                    [col_ach, 22.0],
+                    egui::Label::new(
+                        egui::RichText::new("Achievements")
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    ),
+                );
+                ui.add_sized(
+                    [col_pct, 22.0],
+                    egui::Label::new(
+                        egui::RichText::new("Progress")
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    ),
+                );
+                ui.add_sized(
+                    [col_playtime, 22.0],
+                    egui::Label::new(
+                        egui::RichText::new("Playtime")
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    ),
+                );
+                ui.add_sized(
+                    [col_source, 22.0],
+                    egui::Label::new(
+                        egui::RichText::new("Source")
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    ),
+                );
+                ui.add_sized(
+                    [col_action, 22.0],
+                    egui::Label::new(
+                        egui::RichText::new("Actions")
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    ),
+                );
+            });
+            ui.separator();
+
+            // Virtualized Scroll Area Expanding to Full Remaining Height
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                    for idx in row_range {
+                        let key = filtered_keys[idx];
+                        if let Some(game) = self.db.games.get(key) {
+                            ui.horizontal(|ui| {
+                                ui.add_sized(
+                                    [col_title, row_height],
+                                    egui::Label::new(&game.name).truncate(),
+                                );
+                                ui.add_sized(
+                                    [col_platform, row_height],
+                                    egui::Label::new(&game.platform).truncate(),
+                                );
+                                ui.add_sized(
+                                    [col_appid, row_height],
+                                    egui::Label::new(game.appid.as_deref().unwrap_or("—")).truncate(),
+                                );
+                                ui.add_sized(
+                                    [col_ach, row_height],
+                                    egui::Label::new(format!("{}/{}", game.unlocked, game.total)),
+                                );
+                                ui.add_sized(
+                                    [col_pct, row_height],
+                                    egui::Label::new(format!("{}%", game.pct)),
+                                );
+                                ui.add_sized(
+                                    [col_playtime, row_height],
+                                    egui::Label::new(format!(
+                                        "{}h {}m",
+                                        game.playtime_minutes / 60,
+                                        game.playtime_minutes % 60
+                                    )),
+                                );
+                                ui.add_sized(
+                                    [col_source, row_height],
+                                    egui::Label::new(&game.source),
+                                );
+
+                                if ui
+                                    .add_sized([col_action, 20.0], egui::Button::new("🗑 Delete"))
+                                    .clicked()
+                                {
+                                    to_delete_key = Some(key.clone());
+                                }
+                            });
+                        }
+                    }
+                });
+
+            if let Some(key) = to_delete_key {
+                self.db.games.remove(&key);
+                let _ = save_database(&self.db);
+                self.rebuild_cached_db_keys();
+                self.refresh_data_and_preview(ctx);
+            }
         });
     }
 }

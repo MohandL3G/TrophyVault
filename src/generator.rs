@@ -269,7 +269,7 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
   <!-- CLEAN FOOTER -->
   <g transform="translate(55, 805)">
     <text x="0" y="0" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="900" fill="{primary}" letter-spacing="2">TROPHYVAULT</text>
-    <text x="1090" y="0" text-anchor="end" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="14" font-weight="600" fill="#6a829e">PASSPORT ID: {username} • VERIFIED GAMING RECORD</text>
+    <text x="1090" y="0" text-anchor="end" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="13" font-weight="600" letter-spacing="1" fill="#6a829e">github.com/MohandL3G/TrophyVault</text>
   </g>
 </svg>"##,
             primary = primary,
@@ -475,7 +475,7 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
   <!-- CLEAN FOOTER -->
   <g transform="translate(55, 805)">
     <text x="0" y="0" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="900" fill="{primary}" letter-spacing="2">TROPHYVAULT</text>
-    <text x="1090" y="0" text-anchor="end" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="14" font-weight="600" fill="#6a829e">PASSPORT ID: {username} • VERIFIED GAMING RECORD</text>
+    <text x="1090" y="0" text-anchor="end" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="13" font-weight="600" letter-spacing="1" fill="#6a829e">github.com/MohandL3G/TrophyVault</text>
   </g>
 </svg>"##,
             primary = primary,

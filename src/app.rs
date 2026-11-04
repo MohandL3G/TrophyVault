@@ -562,43 +562,7 @@ impl eframe::App for PassportApp {
             }
         }
 
-        // BOTTOM PANEL: About & GitHub Link (Issue #18)
-        egui::TopBottomPanel::bottom("app_footer_bar").show(ctx, |ui| {
-            ui.add_space(3.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("🏆 TrophyVault")
-                        .color(egui::Color32::from_rgb(0, 240, 255))
-                        .strong()
-                        .size(12.0),
-                );
-                ui.label(
-                    egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
-                        .color(egui::Color32::from_rgb(130, 170, 210))
-                        .monospace()
-                        .size(11.0),
-                );
-                ui.label("•");
-                ui.hyperlink_to(
-                    egui::RichText::new("GitHub Repository ↗")
-                        .color(egui::Color32::from_rgb(88, 166, 255))
-                        .size(11.0),
-                    "https://github.com/MohandL3G/TrophyVault",
-                );
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(active_id) = &self.current_steam_id {
-                        ui.label(
-                            egui::RichText::new(format!("Active Steam ID: {}", active_id))
-                                .color(egui::Color32::from_rgb(120, 150, 180))
-                                .size(11.0),
-                        );
-                    }
-                });
-            });
-            ui.add_space(3.0);
-        });
-
+        // Render active tab view
         match self.active_tab {
             AppTab::Canvas => self.show_canvas_tab(ctx),
             AppTab::CustomGames => self.show_custom_games_tab(ctx),
@@ -809,36 +773,18 @@ impl PassportApp {
                         });
                     });
 
-                    ui.add_space(10.0);
+                    ui.add_space(8.0);
 
-                    // --- ABOUT (Bottom-Left) ---
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("ℹ About TrophyVault")
-                                    .strong()
-                                    .color(egui::Color32::from_rgb(0, 240, 255)),
-                            );
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.hyperlink_to(
-                                    egui::RichText::new("GitHub ↗")
-                                        .color(egui::Color32::from_rgb(88, 166, 255)),
-                                    "https://github.com/MohandL3G/TrophyVault",
-                                );
-                            });
-                        });
-                        ui.add_space(2.0);
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "Version {} • Built with Rust & egui/glow",
-                                env!("CARGO_PKG_VERSION")
-                            ))
-                            .weak()
-                            .size(11.0),
+                    // GitHub Link (Bottom-Left)
+                    ui.horizontal(|ui| {
+                        ui.hyperlink_to(
+                            egui::RichText::new("GitHub Repository ↗")
+                                .color(egui::Color32::from_rgb(88, 166, 255)),
+                            "https://github.com/MohandL3G/TrophyVault",
                         );
                     });
 
-                    ui.add_space(20.0);
+                    ui.add_space(10.0);
                 });
             });
 

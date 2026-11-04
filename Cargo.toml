@@ -1,6 +1,6 @@
 [package]
 name = "trophyvault"
-version = "0.0.8"
+version = "0.0.9"
 edition = "2021"
 authors = ["MohandL3G"]
 description = "TrophyVault: A luxury gaming achievements passport generator desktop application built in Rust"

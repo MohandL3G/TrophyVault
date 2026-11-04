@@ -1,6 +1,6 @@
 [package]
 name = "trophyvault"
-version = "0.0.5"
+version = "0.0.6"
 edition = "2021"
 authors = ["MohandL3G"]
 description = "TrophyVault: A luxury gaming achievements passport generator desktop application built in Rust"
@@ -16,8 +16,8 @@ path = "src/main.rs"
 winres = "0.1"
 
 [dependencies]
-# UI Framework
-eframe = { version = "0.29", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11"] }
+# UI Framework (use Glow OpenGL backend for smooth desktop rendering without DX12/NVIDIA game overlay hooks)
+eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui = "0.29"
 
 # Image processing & SVG rendering

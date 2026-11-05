@@ -105,9 +105,14 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
             options.title.trim().to_string()
         };
 
-        let appid_str = game.appid.as_deref().unwrap_or("N/A");
         let playtime_str = if game.playtime_minutes > 0 {
-            format!("{}h {}m", game.playtime_minutes / 60, game.playtime_minutes % 60)
+            let hours = game.playtime_minutes / 60;
+            let mins = game.playtime_minutes % 60;
+            if hours >= 1000 {
+                format!("{}h {}m", format_number(hours), mins)
+            } else {
+                format!("{}h {}m", hours, mins)
+            }
         } else {
             "0h 0m".to_string()
         };
@@ -176,98 +181,59 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     <text x="100" y="136" text-anchor="middle" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="800" fill="{primary}" letter-spacing="3">OVR</text>
   </g>
 
-  <!-- SECTION 1: PROGRESS -->
-  <g transform="translate(45, 260)">
-    <rect x="0" y="0" width="5" height="24" fill="{primary}" rx="2"/>
-    <text x="18" y="19" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="800" fill="{primary}" letter-spacing="2">PROGRESS</text>
-
-    <!-- Panel Box -->
-    <rect x="0" y="32" width="1110" height="280" rx="10" fill="#061929" stroke="{panel_border}" stroke-width="2"/>
-
-    <!-- Grid Dividing Lines -->
-    <line x1="370" y1="42" x2="370" y2="302" stroke="{panel_border}" stroke-width="1.5" stroke-dasharray="6,4"/>
-    <line x1="740" y1="42" x2="740" y2="302" stroke="{panel_border}" stroke-width="1.5" stroke-dasharray="6,4"/>
-    <line x1="15" y1="172" x2="1095" y2="172" stroke="{panel_border}" stroke-width="1.5"/>
-
-    <!-- Item 1: Unlocked Achievements -->
-    <g transform="translate(30, 65)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{MEDAL_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Achievements</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{unlocked} <tspan font-size="20" fill="#6a829e">/ {total}</tspan></text>
-    </g>
-
-    <!-- Item 2: Completion Rate -->
-    <g transform="translate(400, 65)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{COMPASS_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Completion Rate</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="{primary}">{ovr}%</text>
-    </g>
-
-    <!-- Item 3: Status -->
-    <g transform="translate(770, 65)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{TROPHY_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Clear Status</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="26" font-weight="900" fill="#f0f6fc">{status}</text>
-    </g>
-
-    <!-- Item 4: Locked Remaining -->
-    <g transform="translate(30, 195)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{CHECKLIST_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Locked Remaining</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{locked} <tspan font-size="20" fill="#6a829e">left</tspan></text>
-    </g>
-
-    <!-- Item 5: Platform Source -->
-    <g transform="translate(400, 195)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{GAMEPAD_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Platform Source</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="28" font-weight="900" fill="#f0f6fc">{platform}</text>
-    </g>
-
-    <!-- Item 6: App ID -->
-    <g transform="translate(770, 195)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{STEAM_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Game Identifier / ID</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="30" font-weight="900" fill="{primary}">{appid_str}</text>
-    </g>
-  </g>
-
-  <!-- SECTION 2: SUMMARY -->
-  <g transform="translate(45, 600)">
+  <!-- SECTION 1: GAME SUMMARY -->
+  <g transform="translate(45, 230)">
     <rect x="0" y="0" width="5" height="24" fill="{primary}" rx="2"/>
     <text x="18" y="19" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="800" fill="{primary}" letter-spacing="2">GAME SUMMARY</text>
 
     <!-- Panel Box -->
-    <rect x="0" y="32" width="1110" height="135" rx="10" fill="#061929" stroke="{panel_border}" stroke-width="2"/>
+    <rect x="0" y="32" width="1110" height="490" rx="10" fill="#061929" stroke="{panel_border}" stroke-width="2"/>
 
-    <!-- Stat 1 -->
-    <g transform="translate(60, 60)">
-      <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="38" font-weight="900" fill="#f0f6fc">{unlocked}</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Earned Unlocks</text>
+    <!-- Grid Dividing Lines -->
+    <line x1="370" y1="42" x2="370" y2="512" stroke="{panel_border}" stroke-width="1.5" stroke-dasharray="6,4"/>
+    <line x1="740" y1="42" x2="740" y2="512" stroke="{panel_border}" stroke-width="1.5" stroke-dasharray="6,4"/>
+    <line x1="15" y1="277" x2="1095" y2="277" stroke="{panel_border}" stroke-width="1.5"/>
+
+    <!-- Item 1: Unlocked Achievements -->
+    <g transform="translate(30, 110)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{MEDAL_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Achievements</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{unlocked} <tspan font-size="24" fill="#6a829e">/ {total}</tspan></text>
     </g>
 
-    <line x1="260" y1="52" x2="260" y2="145" stroke="{panel_border}" stroke-width="1.5"/>
-
-    <!-- Stat 2 -->
-    <g transform="translate(320, 60)">
-      <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="38" font-weight="900" fill="#f0f6fc">{total}</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Total In Schema</text>
+    <!-- Item 2: Completion Rate -->
+    <g transform="translate(400, 110)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{COMPASS_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Completion Rate</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="{primary}">{ovr}%</text>
     </g>
 
-    <line x1="530" y1="52" x2="530" y2="145" stroke="{panel_border}" stroke-width="1.5"/>
-
-    <!-- Stat 3 -->
-    <g transform="translate(590, 60)">
-      <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="38" font-weight="900" fill="{primary}">{ovr}%</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Completion Rate</text>
+    <!-- Item 3: Status -->
+    <g transform="translate(770, 110)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{TROPHY_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Clear Status</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{status}</text>
     </g>
 
-    <line x1="800" y1="52" x2="800" y2="145" stroke="{panel_border}" stroke-width="1.5"/>
+    <!-- Item 4: Locked Remaining -->
+    <g transform="translate(30, 355)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{CHECKLIST_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Locked Remaining</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{locked} <tspan font-size="24" fill="#6a829e">left</tspan></text>
+    </g>
 
-    <!-- Stat 4 -->
-    <g transform="translate(860, 60)">
-      <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="32" font-weight="900" fill="{primary}">{playtime_str}</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Cumulative Playtime</text>
+    <!-- Item 5: Platform Source -->
+    <g transform="translate(400, 355)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{GAMEPAD_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Platform Source</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{platform}</text>
+    </g>
+
+    <!-- Item 6: Total Playtime -->
+    <g transform="translate(770, 355)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{CLOCK_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Total Playtime</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="{primary}">{playtime_str}</text>
     </g>
   </g>
 
@@ -290,13 +256,12 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
             locked = locked,
             status = status,
             playtime_str = playtime_str,
-            appid_str = appid_str,
             MEDAL_ICON = MEDAL_ICON,
             COMPASS_ICON = COMPASS_ICON,
             TROPHY_ICON = TROPHY_ICON,
             CHECKLIST_ICON = CHECKLIST_ICON,
             GAMEPAD_ICON = GAMEPAD_ICON,
-            STEAM_ICON = STEAM_ICON
+            CLOCK_ICON = CLOCK_ICON
         )
     } else {
         // --- OVERALL LIBRARY PASSPORT ---
@@ -308,6 +273,14 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
             "Hunter of Yharnam   •   Trophy Hunter"
         } else {
             options.title.trim()
+        };
+
+        let total_playtime_hours = s.total_playtime_minutes / 60;
+        let total_playtime_mins = s.total_playtime_minutes % 60;
+        let total_playtime_str = if total_playtime_hours >= 1000 {
+            format!("{}h {}m", format_number(total_playtime_hours as u32), total_playtime_mins)
+        } else {
+            format!("{}h {}m", total_playtime_hours, total_playtime_mins)
         };
 
         format!(
@@ -374,107 +347,59 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     <text x="100" y="136" text-anchor="middle" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="800" fill="{primary}" letter-spacing="3">OVR</text>
   </g>
 
-  <!-- SECTION 1: PROGRESS -->
-  <g transform="translate(45, 260)">
-    <rect x="0" y="0" width="5" height="24" fill="{primary}" rx="2"/>
-    <text x="18" y="19" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="800" fill="{primary}" letter-spacing="2">PROGRESS</text>
-
-    <!-- Panel Box -->
-    <rect x="0" y="32" width="1110" height="280" rx="10" fill="#061929" stroke="{panel_border}" stroke-width="2"/>
-
-    <!-- Grid Dividing Lines -->
-    <line x1="370" y1="42" x2="370" y2="302" stroke="{panel_border}" stroke-width="1.5" stroke-dasharray="6,4"/>
-    <line x1="740" y1="42" x2="740" y2="302" stroke="{panel_border}" stroke-width="1.5" stroke-dasharray="6,4"/>
-    <line x1="15" y1="172" x2="1095" y2="172" stroke="{panel_border}" stroke-width="1.5"/>
-
-    <!-- Item 1: Perfect Games -->
-    <g transform="translate(30, 65)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{TROPHY_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Perfect Games (100%)</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{perfect_games} <tspan font-size="20" fill="#6a829e">/ {total_games}</tspan></text>
-    </g>
-
-    <!-- Item 2: Completion Rate -->
-    <g transform="translate(400, 65)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{COMPASS_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Completion Rate</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="{primary}">{completion_rate}</text>
-    </g>
-
-    <!-- Item 3: Total Achievements -->
-    <g transform="translate(770, 65)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{MEDAL_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Unlocked Achievements</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{unlocked_ach} <tspan font-size="20" fill="#6a829e">/ {total_ach}</tspan></text>
-    </g>
-
-    <!-- Item 4: In Progress Games -->
-    <g transform="translate(30, 195)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{GAMEPAD_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Games in Progress</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{in_progress_games} <tspan font-size="20" fill="#6a829e">active</tspan></text>
-    </g>
-
-    <!-- Item 5: Steam Achievements -->
-    <g transform="translate(400, 195)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{STEAM_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Steam Achievements</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{steam_unlocked} <tspan font-size="20" fill="#6a829e">/ {steam_total}</tspan></text>
-    </g>
-
-    <!-- Item 6: PC Ports & Decomps -->
-    <g transform="translate(770, 195)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{EMULATOR_ICON}</g>
-      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">PC Ports &amp; Decomps</text>
-      <text x="65" y="65" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{emu_unlocked} <tspan font-size="20" fill="#6a829e">/ {emu_total}</tspan></text>
-    </g>
-  </g>
-
-  <!-- SECTION 2: LIBRARY OVERVIEW / STATS -->
-  <g transform="translate(45, 600)">
+  <!-- SECTION 1: LIBRARY OVERVIEW -->
+  <g transform="translate(45, 230)">
     <rect x="0" y="0" width="5" height="24" fill="{primary}" rx="2"/>
     <text x="18" y="19" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="800" fill="{primary}" letter-spacing="2">LIBRARY OVERVIEW</text>
 
-    <!-- Panel Box -->
-    <rect x="0" y="32" width="1110" height="135" rx="10" fill="#061929" stroke="{panel_border}" stroke-width="2"/>
+    <!-- Panel Box: 490px height -->
+    <rect x="0" y="32" width="1110" height="490" rx="10" fill="#061929" stroke="{panel_border}" stroke-width="2"/>
+    <line x1="370" y1="42" x2="370" y2="512" stroke="{panel_border}" stroke-width="1.5" stroke-dasharray="6,4"/>
+    <line x1="740" y1="42" x2="740" y2="512" stroke="{panel_border}" stroke-width="1.5" stroke-dasharray="6,4"/>
+    <line x1="15" y1="277" x2="1095" y2="277" stroke="{panel_border}" stroke-width="1.5"/>
 
-    <!-- Stat 1: Total Games -->
-    <g transform="translate(45, 60)">
-      <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="38" font-weight="900" fill="#f0f6fc">{total_games}</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Total Games</text>
+    <!-- Row 1 -->
+    <!-- Item 1: Perfect Games -->
+    <g transform="translate(30, 110)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{TROPHY_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Perfect Games (100%)</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{perfect_games} <tspan font-size="24" fill="#6a829e">/ {total_games}</tspan></text>
     </g>
 
-    <line x1="220" y1="52" x2="220" y2="145" stroke="{panel_border}" stroke-width="1.5"/>
-
-    <!-- Stat 2: Perfect 100% -->
-    <g transform="translate(265, 60)">
-      <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="38" font-weight="900" fill="{primary}">{perfect_games}</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Perfect Games</text>
+    <!-- Item 2: Completion Rate -->
+    <g transform="translate(400, 110)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{COMPASS_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Completion Rate</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="{primary}">{completion_rate}</text>
     </g>
 
-    <line x1="440" y1="52" x2="440" y2="145" stroke="{panel_border}" stroke-width="1.5"/>
-
-    <!-- Stat 3: Unlocked Ach -->
-    <g transform="translate(485, 60)">
-      <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="38" font-weight="900" fill="#f0f6fc">{unlocked_ach}</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Unlocked Ach.</text>
+    <!-- Item 3: Total Playtime -->
+    <g transform="translate(770, 110)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{CLOCK_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Total Playtime</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="{primary}">{total_playtime}</text>
     </g>
 
-    <line x1="680" y1="52" x2="680" y2="145" stroke="{panel_border}" stroke-width="1.5"/>
-
-    <!-- Stat 4: In Progress & Sparkle -->
-    <g transform="translate(730, 60)">
-      <g transform="translate(-5, 0)" fill="{primary}">{STAR_SPARKLE}</g>
-      <text x="45" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="38" font-weight="900" fill="{primary}">{in_progress_games}</text>
-      <text x="45" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">In Progress</text>
+    <!-- Row 2 -->
+    <!-- Item 4: In Progress Games -->
+    <g transform="translate(30, 355)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{GAMEPAD_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Games in Progress</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{in_progress_games} <tspan font-size="24" fill="#6a829e">active</tspan></text>
     </g>
 
-    <line x1="910" y1="52" x2="910" y2="145" stroke="{panel_border}" stroke-width="1.5"/>
+    <!-- Item 5: Steam Achievements -->
+    <g transform="translate(400, 355)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{STEAM_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Steam Achievements</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{steam_unlocked} <tspan font-size="24" fill="#6a829e">/ {steam_total}</tspan></text>
+    </g>
 
-    <!-- Stat 5: Locked -->
-    <g transform="translate(945, 60)">
-      <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#8da4be">{locked_ach}</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Locked Remaining</text>
+    <!-- Item 6: PC Ports & Decomps -->
+    <g transform="translate(770, 355)">
+      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{EMULATOR_ICON}</g>
+      <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">PC Ports &amp; Decomps</text>
+      <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{emu_unlocked} <tspan font-size="24" fill="#6a829e">/ {emu_total}</tspan></text>
     </g>
   </g>
 
@@ -491,23 +416,21 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
             title_line = title_line,
             total_games = s.total_configs,
             unlocked_ach = format_number(s.unlocked_achievements),
-            total_ach = format_number(s.total_achievements),
             ovr = ovr,
             perfect_games = s.perfect_games,
             completion_rate = completion_rate_str,
+            total_playtime = total_playtime_str,
             in_progress_games = s.in_progress_games,
             steam_unlocked = format_number(s.steam_official_unlocked),
             steam_total = format_number(s.steam_official_total),
             emu_unlocked = format_number(s.emulator_unlocked),
             emu_total = format_number(s.emulator_total),
-            locked_ach = format_number(s.locked_achievements),
             TROPHY_ICON = TROPHY_ICON,
             COMPASS_ICON = COMPASS_ICON,
-            MEDAL_ICON = MEDAL_ICON,
+            CLOCK_ICON = CLOCK_ICON,
             GAMEPAD_ICON = GAMEPAD_ICON,
             STEAM_ICON = STEAM_ICON,
-            EMULATOR_ICON = EMULATOR_ICON,
-            STAR_SPARKLE = STAR_SPARKLE
+            EMULATOR_ICON = EMULATOR_ICON
         )
     }
 }
@@ -561,4 +484,90 @@ pub fn render_svg_to_png(svg_str: &str, width: u32, height: u32) -> Result<Vec<u
     pixmap
         .encode_png()
         .map_err(|e| format!("Failed to encode PNG: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::{AchievementsData, GameItem, LibraryStats, Preferences};
+    use std::path::PathBuf;
+
+    fn sample_stats() -> LibraryStats {
+        LibraryStats {
+            total_configs: 10,
+            active_configs: 10,
+            perfect_games: 2,
+            in_progress_games: 5,
+            not_started_games: 3,
+            total_achievements: 200,
+            unlocked_achievements: 120,
+            locked_achievements: 80,
+            completion_rate: 60.0,
+            ovr_score: 75,
+            steam_official_games: 8,
+            steam_official_unlocked: 100,
+            steam_official_total: 160,
+            emulator_games: 2,
+            emulator_unlocked: 20,
+            emulator_total: 40,
+            total_playtime_minutes: 185, // 3h 5m
+        }
+    }
+
+    #[test]
+    fn test_overall_library_passport_layout() {
+        let data = AchievementsData {
+            base_path: PathBuf::from("."),
+            preferences: Preferences::default(),
+            username: "TestPlayer".to_string(),
+            stats: sample_stats(),
+            games: Vec::new(),
+        };
+        let options = PassportOptions {
+            username: "TestPlayer",
+            title: "Trophy Hunter",
+            theme: PassportTheme::CyberpunkCyan,
+            selected_game: None,
+        };
+        let svg = generate_passport_svg(&data, &options);
+        assert!(svg.contains("LIBRARY OVERVIEW"));
+        assert!(svg.contains("Total Playtime"));
+        assert!(svg.contains("3h 5m"));
+        assert!(!svg.contains("PROGRESS"));
+    }
+
+    #[test]
+    fn test_single_game_passport_layout() {
+        let game = GameItem {
+            name: "Bloodborne".to_string(),
+            platform: "PC Port (ShadPS4)".to_string(),
+            appid: Some("2485153835".to_string()),
+            unlocked: 40,
+            total: 40,
+            pct: 100,
+            platinum: true,
+            playtime_minutes: 2715, // 45h 15m
+            last_played: None,
+        };
+        let data = AchievementsData {
+            base_path: PathBuf::from("."),
+            preferences: Preferences::default(),
+            username: "TestPlayer".to_string(),
+            stats: sample_stats(),
+            games: vec![game.clone()],
+        };
+        let options = PassportOptions {
+            username: "TestPlayer",
+            title: "Hunter of Yharnam",
+            theme: PassportTheme::BloodborneCrimson,
+            selected_game: Some(&game),
+        };
+        let svg = generate_passport_svg(&data, &options);
+        assert!(svg.contains("GAME SUMMARY"));
+        assert!(svg.contains("Total Playtime"));
+        assert!(svg.contains("45h 15m"));
+        assert!(!svg.contains("Game Identifier / ID"));
+        assert!(!svg.contains("Cumulative Playtime"));
+        assert!(!svg.contains("PROGRESS"));
+    }
 }

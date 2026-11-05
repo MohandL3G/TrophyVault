@@ -617,10 +617,12 @@ pub fn database_to_achievements_data(db: &LibraryDatabase) -> AchievementsData {
     let mut custom_games = 0;
     let mut custom_unlocked = 0;
     let mut custom_total = 0;
+    let mut total_playtime_minutes: u64 = 0;
 
     let mut games: Vec<GameItem> = Vec::with_capacity(db.games.len());
 
     for entry in db.games.values() {
+        total_playtime_minutes += entry.playtime_minutes as u64;
         let unlocked = entry.unlocked;
         let total = entry.total;
         let pct = if total > 0 {
@@ -714,6 +716,7 @@ pub fn database_to_achievements_data(db: &LibraryDatabase) -> AchievementsData {
         emulator_games: custom_games,
         emulator_unlocked: custom_unlocked,
         emulator_total: custom_total,
+        total_playtime_minutes,
     };
 
     let username = if db.preferences.username.trim().is_empty() {

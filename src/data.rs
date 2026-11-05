@@ -68,6 +68,7 @@ pub struct LibraryStats {
     pub emulator_games: u32,
     pub emulator_unlocked: u32,
     pub emulator_total: u32,
+    pub total_playtime_minutes: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -260,6 +261,7 @@ pub fn load_from_dir(dir: &Path) -> Result<AchievementsData, String> {
         emulator_games,
         emulator_unlocked,
         emulator_total,
+        total_playtime_minutes: 0,
     };
 
     Ok(AchievementsData {

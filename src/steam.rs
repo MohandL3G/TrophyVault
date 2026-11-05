@@ -272,21 +272,57 @@ pub fn find_active_steam_id(steam_dir: &Path) -> Option<String> {
     }
 }
 
+fn insert_dual_keyed(results: &mut HashMap<String, SteamAppUsage>, appid: String, usage: SteamAppUsage) {
+    // 1. Direct key
+    results.insert(appid.clone(), usage.clone());
+
+    // 2. If it parses as signed i64 and is negative, index its unsigned 32-bit equivalent
+    if let Ok(signed_val) = appid.parse::<i64>() {
+        if signed_val < 0 {
+            let unsigned_32 = (signed_val as i32) as u32;
+            results.insert(unsigned_32.to_string(), usage.clone());
+        }
+    }
+
+    // 3. If it parses as unsigned u64, index its signed 32-bit and lower-32 equivalents
+    if let Ok(unsigned_val) = appid.parse::<u64>() {
+        if unsigned_val > i32::MAX as u64 && unsigned_val <= u32::MAX as u64 {
+            let signed_32 = (unsigned_val as u32) as i32;
+            results.insert(signed_32.to_string(), usage.clone());
+        } else if unsigned_val > u32::MAX as u64 {
+            let lower_32 = (unsigned_val & 0xFFFF_FFFF) as u32;
+            let signed_32 = lower_32 as i32;
+            results.insert(lower_32.to_string(), usage.clone());
+            results.insert(signed_32.to_string(), usage);
+        }
+    }
+}
+
 /// Parse playtime and last played timestamps from Steam's `localconfig.vdf`.
 /// Returns a map of AppID (or signed AppID) -> SteamAppUsage.
 pub fn parse_localconfig_playtimes(steam_dir: &Path, steam_id: &str) -> HashMap<String, SteamAppUsage> {
-    let mut results: HashMap<String, SteamAppUsage> = HashMap::new();
-    let localconfig_path = steam_dir.join("userdata").join(steam_id).join("config").join("localconfig.vdf");
+    let localconfig_path = steam_dir
+        .join("userdata")
+        .join(steam_id)
+        .join("config")
+        .join("localconfig.vdf");
 
     if !localconfig_path.exists() {
-        return results;
+        return HashMap::new();
     }
 
     let content = match fs::read_to_string(&localconfig_path) {
         Ok(c) => c,
-        Err(_) => return results,
+        Err(_) => return HashMap::new(),
     };
 
+    parse_localconfig_str(&content)
+}
+
+/// Parse playtime and last played timestamps from a `localconfig.vdf` string.
+/// Robust against inner sub-blocks (e.g. cloud, autocloud) that otherwise clear AppIDs prematurely.
+pub fn parse_localconfig_str(content: &str) -> HashMap<String, SteamAppUsage> {
+    let mut results: HashMap<String, SteamAppUsage> = HashMap::new();
     let mut current_appid: Option<String> = None;
     let mut current_usage = SteamAppUsage::default();
     let mut in_apps_section = false;
@@ -300,12 +336,16 @@ pub fn parse_localconfig_playtimes(steam_dir: &Path, steam_id: &str) -> HashMap<
             brace_depth += 1;
             continue;
         } else if trimmed == "}" {
-            if let Some(appid) = current_appid.take() {
+            // App block is rooted strictly at apps_depth + 1
+            if in_apps_section && brace_depth == apps_depth + 1 && current_appid.is_some() {
                 if current_usage.playtime_minutes > 0 || current_usage.last_played.is_some() {
-                    results.insert(appid, current_usage);
+                    let appid = current_appid.take().unwrap();
+                    insert_dual_keyed(&mut results, appid, current_usage);
                 }
+                current_appid = None;
                 current_usage = SteamAppUsage::default();
             }
+
             brace_depth -= 1;
             if in_apps_section && brace_depth < apps_depth {
                 in_apps_section = false;
@@ -322,31 +362,38 @@ pub fn parse_localconfig_playtimes(steam_dir: &Path, steam_id: &str) -> HashMap<
         }
 
         // Inside "apps"
-        // Check for new AppID key: e.g. "105600" or "-1809813461"
-        if trimmed.starts_with('"') && !trimmed.contains('\t') && !trimmed[1..].contains('"') {
-            // Continuation or invalid
-            continue;
-        }
-
         let tokens: Vec<&str> = trimmed
             .split('"')
             .filter(|s| !s.trim().is_empty())
             .collect();
 
         if tokens.len() == 1 && brace_depth == apps_depth {
-            // New app entry: e.g. "105600" or "2485153835" or "-1809813461"
+            // New app entry: e.g. "760" or "2485153835" or "-1809813461"
             let id = tokens[0].trim();
             if id.parse::<i64>().is_ok() {
+                if let Some(prev_id) = current_appid.take() {
+                    if current_usage.playtime_minutes > 0 || current_usage.last_played.is_some() {
+                        insert_dual_keyed(&mut results, prev_id, current_usage);
+                    }
+                }
                 current_appid = Some(id.to_string());
                 current_usage = SteamAppUsage::default();
             }
-        } else if tokens.len() >= 2 {
+        } else if tokens.len() >= 2 && current_appid.is_some() {
             let key = tokens[0].trim();
             let val = tokens[1].trim();
 
             if key.eq_ignore_ascii_case("Playtime") {
                 if let Ok(mins) = val.parse::<u32>() {
-                    current_usage.playtime_minutes = mins;
+                    if mins > current_usage.playtime_minutes {
+                        current_usage.playtime_minutes = mins;
+                    }
+                }
+            } else if key.eq_ignore_ascii_case("PlaytimeDisconnected") {
+                if let Ok(mins) = val.parse::<u32>() {
+                    if current_usage.playtime_minutes == 0 {
+                        current_usage.playtime_minutes = mins;
+                    }
                 }
             } else if key.eq_ignore_ascii_case("LastPlayed") {
                 if let Ok(ts) = val.parse::<u64>() {
@@ -356,12 +403,19 @@ pub fn parse_localconfig_playtimes(steam_dir: &Path, steam_id: &str) -> HashMap<
         }
     }
 
+    // Flush any pending app at EOF
+    if let Some(id) = current_appid.take() {
+        if current_usage.playtime_minutes > 0 || current_usage.last_played.is_some() {
+            insert_dual_keyed(&mut results, id, current_usage);
+        }
+    }
+
     results
 }
 
 /// Lookup playtime for a given AppID, handling signed/unsigned 32-bit conversion.
 pub fn lookup_playtime(playtime_map: &HashMap<String, SteamAppUsage>, appid: &str) -> Option<SteamAppUsage> {
-    // 1. Direct match
+    // 1. Direct match (covers dual-indexed signed and unsigned keys)
     if let Some(usage) = playtime_map.get(appid) {
         return Some(usage.clone());
     }
@@ -371,6 +425,13 @@ pub fn lookup_playtime(playtime_map: &HashMap<String, SteamAppUsage>, appid: &st
         let signed_32 = (unsigned_id as u32) as i32;
         let signed_str = signed_32.to_string();
         if let Some(usage) = playtime_map.get(&signed_str) {
+            return Some(usage.clone());
+        }
+
+        // Lower 32 bits (for 64-bit Steam shortcut IDs)
+        let lower_32 = (unsigned_id & 0xFFFF_FFFF) as u32;
+        let lower_str = lower_32.to_string();
+        if let Some(usage) = playtime_map.get(&lower_str) {
             return Some(usage.clone());
         }
     }
@@ -562,4 +623,106 @@ pub fn scan_luatools_games(steam_dir: &Path) -> Vec<LuaToolsGame> {
     }
 
     list
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_localconfig_str_with_nested_blocks() {
+        let vdf = r#"
+"UserLocalConfigStore"
+{
+	"Software"
+	{
+		"Valve"
+		{
+			"Steam"
+			{
+				"apps"
+				{
+					"760"
+					{
+						"cloud"
+						{
+							"quota_bytes"		"20000000000"
+							"quota_files"		"50000"
+							"last_sync_state"	"synchronized"
+						}
+						"LastPlayed"		"1781159675"
+						"autocloud"
+						{
+							"lastexit"		"1781155969"
+						}
+						"Playtime"		"1"
+					}
+					"-1809813461"
+					{
+						"LastPlayed"		"1793898983"
+						"Playtime"		"1605"
+					}
+					"2280"
+					{
+						"Playtime"		"13613"
+						"PlaytimeDisconnected"	"121"
+					}
+				}
+			}
+		}
+	}
+}
+"#;
+
+        let results = parse_localconfig_str(vdf);
+
+        // App 760 with nested cloud and autocloud blocks
+        assert!(results.contains_key("760"), "App 760 must not be cleared by inner blocks");
+        let app_760 = results.get("760").unwrap();
+        assert_eq!(app_760.playtime_minutes, 1);
+        assert_eq!(app_760.last_played, Some(1781159675));
+
+        // Negative signed Non-Steam AppID (-1809813461 <-> 2485153835)
+        assert!(results.contains_key("-1809813461"), "Negative signed AppID must exist");
+        assert!(results.contains_key("2485153835"), "Unsigned equivalent must be dual-indexed");
+        let bb_signed = results.get("-1809813461").unwrap();
+        let bb_unsigned = results.get("2485153835").unwrap();
+        assert_eq!(bb_signed.playtime_minutes, 1605);
+        assert_eq!(bb_unsigned.playtime_minutes, 1605);
+
+        // App 2280 (DOOM)
+        let doom = results.get("2280").unwrap();
+        assert_eq!(doom.playtime_minutes, 13613);
+
+        // Lookup helper bidirectional tests
+        let lookup_by_unsigned = lookup_playtime(&results, "2485153835");
+        assert!(lookup_by_unsigned.is_some());
+        assert_eq!(lookup_by_unsigned.unwrap().playtime_minutes, 1605);
+
+        let lookup_by_signed = lookup_playtime(&results, "-1809813461");
+        assert!(lookup_by_signed.is_some());
+        assert_eq!(lookup_by_signed.unwrap().playtime_minutes, 1605);
+    }
+
+    #[test]
+    fn test_lookup_playtime_64bit_fallback() {
+        let mut map = HashMap::new();
+        let usage = SteamAppUsage {
+            playtime_minutes: 350,
+            last_played: Some(1700000000),
+        };
+        // Insert as unsigned 32-bit (e.g. 2485153835)
+        map.insert("2485153835".to_string(), usage.clone());
+
+        // Test querying with signed 32-bit "-1809813461"
+        let found = lookup_playtime(&map, "-1809813461");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().playtime_minutes, 350);
+
+        // Test querying with 64-bit Steam ID containing 2485153835 in lower 32 bits
+        let full_64: u64 = (0x80000000u64 << 32) | 2485153835u64;
+        let found_64 = lookup_playtime(&map, &full_64.to_string());
+        assert!(found_64.is_some());
+        assert_eq!(found_64.unwrap().playtime_minutes, 350);
+    }
 }

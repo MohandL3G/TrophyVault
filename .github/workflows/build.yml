@@ -25,6 +25,9 @@ jobs:
       - name: Setup Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Run Unit Tests
+        run: cargo test --verbose
+
       - name: Build Release Binary
         run: cargo build --release --verbose
 

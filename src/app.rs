@@ -30,6 +30,23 @@ enum PassportMode {
     SingleGame,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum DbSortColumn {
+    Title,
+    Platform,
+    AppId,
+    Achievements,
+    Progress,
+    Playtime,
+    Source,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
+
 pub struct PassportApp {
     db: LibraryDatabase,
     data: Option<AchievementsData>,
@@ -60,6 +77,8 @@ pub struct PassportApp {
     // Database Manager search & cached keys
     db_search_query: String,
     cached_db_keys: Vec<String>,
+    db_sort_col: DbSortColumn,
+    db_sort_dir: SortDirection,
 
     // Feedback & Preview
     status_notification: Option<(String, bool)>, // (message, is_error)
@@ -158,6 +177,8 @@ impl PassportApp {
 
             db_search_query: String::new(),
             cached_db_keys: Vec::new(),
+            db_sort_col: DbSortColumn::Progress,
+            db_sort_dir: SortDirection::Descending,
 
             status_notification: None,
             preview_texture: None,
@@ -171,10 +192,33 @@ impl PassportApp {
 
     fn rebuild_cached_db_keys(&mut self) {
         let mut keys: Vec<String> = self.db.games.keys().cloned().collect();
+        let sort_col = self.db_sort_col;
+        let sort_dir = self.db_sort_dir;
+
         keys.sort_by(|a, b| {
-            let ga = &self.db.games[a];
-            let gb = &self.db.games[b];
-            gb.pct.cmp(&ga.pct).then_with(|| ga.name.cmp(&gb.name))
+            let ga = match self.db.games.get(a) {
+                Some(g) => g,
+                None => return std::cmp::Ordering::Equal,
+            };
+            let gb = match self.db.games.get(b) {
+                Some(g) => g,
+                None => return std::cmp::Ordering::Equal,
+            };
+
+            let ord = match sort_col {
+                DbSortColumn::Title => ga.name.to_lowercase().cmp(&gb.name.to_lowercase()),
+                DbSortColumn::Platform => ga.platform.to_lowercase().cmp(&gb.platform.to_lowercase()),
+                DbSortColumn::AppId => ga.appid.cmp(&gb.appid),
+                DbSortColumn::Achievements => ga.unlocked.cmp(&gb.unlocked),
+                DbSortColumn::Progress => ga.pct.cmp(&gb.pct).then_with(|| ga.unlocked.cmp(&gb.unlocked)),
+                DbSortColumn::Playtime => ga.playtime_minutes.cmp(&gb.playtime_minutes),
+                DbSortColumn::Source => ga.source.cmp(&gb.source),
+            };
+
+            match sort_dir {
+                SortDirection::Ascending => ord.then_with(|| ga.name.cmp(&gb.name)),
+                SortDirection::Descending => ord.reverse().then_with(|| ga.name.cmp(&gb.name)),
+            }
         });
         self.cached_db_keys = keys;
     }
@@ -638,6 +682,23 @@ impl PassportApp {
                                     self.selected_game_name = game_name;
                                     selection_changed = true;
                                 }
+
+                                if let Some(game) = self.selected_game() {
+                                    ui.add_space(6.0);
+                                    let playtime_display = format!(
+                                        "{}h {}m",
+                                        game.playtime_minutes / 60,
+                                        game.playtime_minutes % 60
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "⏱ Playtime: {} • 🏆 Achievements: {}/{} ({}%)",
+                                            playtime_display, game.unlocked, game.total, game.pct
+                                        ))
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(0, 240, 255)),
+                                    );
+                                }
                             }
                         }
                     });
@@ -1050,9 +1111,145 @@ impl PassportApp {
 
             ui.add_space(8.0);
 
+            let avail_w = ui.available_width().max(880.0);
+            let col_platform = 120.0;
+            let col_appid = 90.0;
+            let col_ach = 105.0;
+            let col_pct = 80.0;
+            let col_playtime = 95.0;
+            let col_source = 85.0;
+            let col_action = 80.0;
+            let fixed_sum = col_platform + col_appid + col_ach + col_pct + col_playtime + col_source + col_action;
+            let col_title = (avail_w - fixed_sum - 35.0).max(240.0);
+
+            let mut switch_sort = None;
+            let sort_arrow = |col: DbSortColumn| -> &'static str {
+                if self.db_sort_col == col {
+                    match self.db_sort_dir {
+                        SortDirection::Ascending => " ▲",
+                        SortDirection::Descending => " ▼",
+                    }
+                } else {
+                    ""
+                }
+            };
+
+            // Header Row (Matches Body Column Sizes Exactly, with clickable sorting)
+            ui.horizontal(|ui| {
+                if ui.add_sized(
+                    [col_title, 22.0],
+                    egui::Button::new(
+                        egui::RichText::new(format!("Game Title{}", sort_arrow(DbSortColumn::Title)))
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    )
+                    .frame(false),
+                ).clicked() {
+                    switch_sort = Some(DbSortColumn::Title);
+                }
+
+                if ui.add_sized(
+                    [col_platform, 22.0],
+                    egui::Button::new(
+                        egui::RichText::new(format!("Platform{}", sort_arrow(DbSortColumn::Platform)))
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    )
+                    .frame(false),
+                ).clicked() {
+                    switch_sort = Some(DbSortColumn::Platform);
+                }
+
+                if ui.add_sized(
+                    [col_appid, 22.0],
+                    egui::Button::new(
+                        egui::RichText::new(format!("App ID{}", sort_arrow(DbSortColumn::AppId)))
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    )
+                    .frame(false),
+                ).clicked() {
+                    switch_sort = Some(DbSortColumn::AppId);
+                }
+
+                if ui.add_sized(
+                    [col_ach, 22.0],
+                    egui::Button::new(
+                        egui::RichText::new(format!("Achievements{}", sort_arrow(DbSortColumn::Achievements)))
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    )
+                    .frame(false),
+                ).clicked() {
+                    switch_sort = Some(DbSortColumn::Achievements);
+                }
+
+                if ui.add_sized(
+                    [col_pct, 22.0],
+                    egui::Button::new(
+                        egui::RichText::new(format!("Progress{}", sort_arrow(DbSortColumn::Progress)))
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    )
+                    .frame(false),
+                ).clicked() {
+                    switch_sort = Some(DbSortColumn::Progress);
+                }
+
+                if ui.add_sized(
+                    [col_playtime, 22.0],
+                    egui::Button::new(
+                        egui::RichText::new(format!("Playtime{}", sort_arrow(DbSortColumn::Playtime)))
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    )
+                    .frame(false),
+                ).clicked() {
+                    switch_sort = Some(DbSortColumn::Playtime);
+                }
+
+                if ui.add_sized(
+                    [col_source, 22.0],
+                    egui::Button::new(
+                        egui::RichText::new(format!("Source{}", sort_arrow(DbSortColumn::Source)))
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    )
+                    .frame(false),
+                ).clicked() {
+                    switch_sort = Some(DbSortColumn::Source);
+                }
+
+                ui.add_sized(
+                    [col_action, 22.0],
+                    egui::Label::new(
+                        egui::RichText::new("Actions")
+                            .strong()
+                            .color(egui::Color32::from_rgb(0, 240, 255)),
+                    ),
+                );
+            });
+
+            if let Some(col) = switch_sort {
+                if self.db_sort_col == col {
+                    self.db_sort_dir = match self.db_sort_dir {
+                        SortDirection::Ascending => SortDirection::Descending,
+                        SortDirection::Descending => SortDirection::Ascending,
+                    };
+                } else {
+                    self.db_sort_col = col;
+                    self.db_sort_dir = match col {
+                        DbSortColumn::Title | DbSortColumn::Platform | DbSortColumn::Source => SortDirection::Ascending,
+                        _ => SortDirection::Descending,
+                    };
+                }
+                self.rebuild_cached_db_keys();
+            }
+            ui.separator();
+
             // Table of Games (Optimized with cached keys and virtual row windowing, scaling dynamically to full width and height)
             let query = self.db_search_query.to_lowercase();
-            let filtered_keys: Vec<&String> = self
+            let filtered_keys: Vec<String> = self
                 .cached_db_keys
                 .iter()
                 .filter(|key| {
@@ -1065,98 +1262,19 @@ impl PassportApp {
                         false
                     }
                 })
+                .cloned()
                 .collect();
 
             let mut to_delete_key: Option<String> = None;
             let row_height = 24.0;
             let total_rows = filtered_keys.len();
 
-            let avail_w = ui.available_width().max(880.0);
-            let col_platform = 120.0;
-            let col_appid = 90.0;
-            let col_ach = 105.0;
-            let col_pct = 80.0;
-            let col_playtime = 95.0;
-            let col_source = 85.0;
-            let col_action = 80.0;
-            let fixed_sum = col_platform + col_appid + col_ach + col_pct + col_playtime + col_source + col_action;
-            let col_title = (avail_w - fixed_sum - 35.0).max(240.0);
-
-            // Header Row (Matches Body Column Sizes Exactly)
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [col_title, 22.0],
-                    egui::Label::new(
-                        egui::RichText::new("Game Title")
-                            .strong()
-                            .color(egui::Color32::from_rgb(0, 240, 255)),
-                    ),
-                );
-                ui.add_sized(
-                    [col_platform, 22.0],
-                    egui::Label::new(
-                        egui::RichText::new("Platform")
-                            .strong()
-                            .color(egui::Color32::from_rgb(0, 240, 255)),
-                    ),
-                );
-                ui.add_sized(
-                    [col_appid, 22.0],
-                    egui::Label::new(
-                        egui::RichText::new("App ID")
-                            .strong()
-                            .color(egui::Color32::from_rgb(0, 240, 255)),
-                    ),
-                );
-                ui.add_sized(
-                    [col_ach, 22.0],
-                    egui::Label::new(
-                        egui::RichText::new("Achievements")
-                            .strong()
-                            .color(egui::Color32::from_rgb(0, 240, 255)),
-                    ),
-                );
-                ui.add_sized(
-                    [col_pct, 22.0],
-                    egui::Label::new(
-                        egui::RichText::new("Progress")
-                            .strong()
-                            .color(egui::Color32::from_rgb(0, 240, 255)),
-                    ),
-                );
-                ui.add_sized(
-                    [col_playtime, 22.0],
-                    egui::Label::new(
-                        egui::RichText::new("Playtime")
-                            .strong()
-                            .color(egui::Color32::from_rgb(0, 240, 255)),
-                    ),
-                );
-                ui.add_sized(
-                    [col_source, 22.0],
-                    egui::Label::new(
-                        egui::RichText::new("Source")
-                            .strong()
-                            .color(egui::Color32::from_rgb(0, 240, 255)),
-                    ),
-                );
-                ui.add_sized(
-                    [col_action, 22.0],
-                    egui::Label::new(
-                        egui::RichText::new("Actions")
-                            .strong()
-                            .color(egui::Color32::from_rgb(0, 240, 255)),
-                    ),
-                );
-            });
-            ui.separator();
-
             // Virtualized Scroll Area Expanding to Full Remaining Height
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show_rows(ui, row_height, total_rows, |ui, row_range| {
                     for idx in row_range {
-                        let key = filtered_keys[idx];
+                        let key = &filtered_keys[idx];
                         if let Some(game) = self.db.games.get(key) {
                             ui.horizontal(|ui| {
                                 ui.add_sized(

@@ -44,6 +44,8 @@ pub struct GameItem {
     pub total: u32,
     pub pct: u32,
     pub platinum: bool,
+    pub playtime_minutes: u32,
+    pub last_played: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -213,6 +215,8 @@ pub fn load_from_dir(dir: &Path) -> Result<AchievementsData, String> {
             total,
             pct,
             platinum,
+            playtime_minutes: 0,
+            last_played: None,
         });
     }
 

@@ -106,6 +106,11 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
         };
 
         let appid_str = game.appid.as_deref().unwrap_or("N/A");
+        let playtime_str = if game.playtime_minutes > 0 {
+            format!("{}h {}m", game.playtime_minutes / 60, game.playtime_minutes % 60)
+        } else {
+            "0h 0m".to_string()
+        };
 
         format!(
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 850" width="1200" height="850">
@@ -261,8 +266,8 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
 
     <!-- Stat 4 -->
     <g transform="translate(860, 60)">
-      <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="32" font-weight="900" fill="{primary}">{status}</text>
-      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Clear Status</text>
+      <text x="0" y="35" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="32" font-weight="900" fill="{primary}">{playtime_str}</text>
+      <text x="0" y="68" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#8da4be">Cumulative Playtime</text>
     </g>
   </g>
 
@@ -284,6 +289,7 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
             total = game.total,
             locked = locked,
             status = status,
+            playtime_str = playtime_str,
             appid_str = appid_str,
             MEDAL_ICON = MEDAL_ICON,
             COMPASS_ICON = COMPASS_ICON,

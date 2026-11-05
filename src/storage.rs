@@ -401,7 +401,32 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
         HashMap::new()
     };
 
-    // 2. Scan configured Manual Games (e.g. Bloodborne)
+    // 2. Discover Non-Steam shortcuts early from shortcuts.vdf
+    let shortcuts = if let (Some(s_dir), Some(s_id)) = (&steam_dir, &steam_id) {
+        parse_non_steam_shortcuts(s_dir, s_id)
+    } else {
+        Vec::new()
+    };
+
+    // Auto-link manual games with Non-Steam shortcuts (e.g. Bloodborne)
+    for sc in &shortcuts {
+        let sc_appid_str = sc.appid.to_string();
+        let sc_name_lower = sc.appname.to_lowercase();
+        for manual in &mut db.manual_games {
+            if manual.non_steam_appid.is_none() {
+                let id_lower = manual.id.to_lowercase();
+                let name_lower = manual.name.to_lowercase();
+                if sc_name_lower.contains(&id_lower)
+                    || name_lower.contains(&sc_name_lower)
+                    || sc_name_lower.contains(&name_lower)
+                {
+                    manual.non_steam_appid = Some(sc_appid_str.clone());
+                }
+            }
+        }
+    }
+
+    // 3. Scan configured Manual Games (e.g. Bloodborne)
     let manual_configs = db.manual_games.clone();
     for manual_cfg in manual_configs {
         if !manual_cfg.enabled {
@@ -470,7 +495,7 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
         }
     }
 
-    // 3. Scan LuaTools games from stplug-in
+    // 4. Scan LuaTools games from stplug-in
     if let Some(s_dir) = &steam_dir {
         let luatools_list = scan_luatools_games(s_dir);
         report.luatools_found = luatools_list.len() as u32;
@@ -506,31 +531,66 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
         }
     }
 
-    // 4. Update playtimes and timestamps for all games matching localconfig.vdf
+    // 5. Discover Non-Steam shortcuts into persistent db.games
+    for sc in shortcuts {
+        let sc_appid_str = sc.appid.to_string();
+        let is_manual = db.manual_games.iter().any(|m| {
+            m.non_steam_appid.as_deref() == Some(&sc_appid_str)
+                || m.name.eq_ignore_ascii_case(&sc.appname)
+        });
+
+        if !is_manual {
+            let mut playtime = 0;
+            let mut last_played = None;
+            if let Some(usage) = lookup_playtime(&playtimes, &sc_appid_str) {
+                playtime = usage.playtime_minutes;
+                last_played = usage.last_played;
+            }
+
+            if let Some(existing) = db.games.get_mut(&sc_appid_str) {
+                if existing.name.is_empty() {
+                    existing.name = sc.appname.clone();
+                }
+                if playtime > existing.playtime_minutes {
+                    existing.playtime_minutes = playtime;
+                }
+                if last_played.is_some() {
+                    existing.last_played = last_played;
+                }
+            } else {
+                db.games.insert(
+                    sc_appid_str.clone(),
+                    SavedGameEntry {
+                        id: sc_appid_str.clone(),
+                        name: sc.appname.clone(),
+                        platform: "Non-Steam".to_string(),
+                        appid: Some(sc_appid_str.clone()),
+                        unlocked: 0,
+                        total: 0,
+                        pct: 0,
+                        platinum: false,
+                        playtime_minutes: playtime,
+                        last_played,
+                        source: "shortcut".to_string(),
+                        last_scanned: now,
+                        trophies: Vec::new(),
+                    },
+                );
+            }
+        }
+    }
+
+    // 6. Universal sweep: Update playtimes and timestamps for all games matching localconfig.vdf
     for entry in db.games.values_mut() {
         if let Some(appid) = &entry.appid {
             if let Some(usage) = lookup_playtime(&playtimes, appid) {
-                if usage.playtime_minutes > 0 {
+                if usage.playtime_minutes > entry.playtime_minutes {
                     entry.playtime_minutes = usage.playtime_minutes;
                 }
                 if usage.last_played.is_some() {
                     entry.last_played = usage.last_played;
                 }
                 report.steam_updated += 1;
-            }
-        }
-    }
-
-    // 5. Update shortcuts discovery
-    if let (Some(s_dir), Some(s_id)) = (&steam_dir, &steam_id) {
-        let shortcuts = parse_non_steam_shortcuts(s_dir, s_id);
-        for sc in shortcuts {
-            // Check if this shortcut matches any manual game
-            let sc_appid_str = sc.appid.to_string();
-            for manual in &mut db.manual_games {
-                if manual.non_steam_appid.is_none() && sc.appname.to_lowercase().contains(&manual.id) {
-                    manual.non_steam_appid = Some(sc_appid_str.clone());
-                }
             }
         }
     }
@@ -609,6 +669,8 @@ pub fn database_to_achievements_data(db: &LibraryDatabase) -> AchievementsData {
             total,
             pct,
             platinum,
+            playtime_minutes: entry.playtime_minutes,
+            last_played: entry.last_played,
         });
     }
 

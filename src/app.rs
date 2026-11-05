@@ -1111,27 +1111,6 @@ impl PassportApp {
 
             ui.add_space(8.0);
 
-            // Table of Games (Optimized with cached keys and virtual row windowing, scaling dynamically to full width and height)
-            let query = self.db_search_query.to_lowercase();
-            let filtered_keys: Vec<&String> = self
-                .cached_db_keys
-                .iter()
-                .filter(|key| {
-                    if query.is_empty() {
-                        true
-                    } else if let Some(game) = self.db.games.get(*key) {
-                        game.name.to_lowercase().contains(&query)
-                            || game.platform.to_lowercase().contains(&query)
-                    } else {
-                        false
-                    }
-                })
-                .collect();
-
-            let mut to_delete_key: Option<String> = None;
-            let row_height = 24.0;
-            let total_rows = filtered_keys.len();
-
             let avail_w = ui.available_width().max(880.0);
             let col_platform = 120.0;
             let col_appid = 90.0;
@@ -1268,12 +1247,34 @@ impl PassportApp {
             }
             ui.separator();
 
+            // Table of Games (Optimized with cached keys and virtual row windowing, scaling dynamically to full width and height)
+            let query = self.db_search_query.to_lowercase();
+            let filtered_keys: Vec<String> = self
+                .cached_db_keys
+                .iter()
+                .filter(|key| {
+                    if query.is_empty() {
+                        true
+                    } else if let Some(game) = self.db.games.get(*key) {
+                        game.name.to_lowercase().contains(&query)
+                            || game.platform.to_lowercase().contains(&query)
+                    } else {
+                        false
+                    }
+                })
+                .cloned()
+                .collect();
+
+            let mut to_delete_key: Option<String> = None;
+            let row_height = 24.0;
+            let total_rows = filtered_keys.len();
+
             // Virtualized Scroll Area Expanding to Full Remaining Height
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show_rows(ui, row_height, total_rows, |ui, row_range| {
                     for idx in row_range {
-                        let key = filtered_keys[idx];
+                        let key = &filtered_keys[idx];
                         if let Some(game) = self.db.games.get(key) {
                             ui.horizontal(|ui| {
                                 ui.add_sized(

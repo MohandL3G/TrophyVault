@@ -612,6 +612,16 @@ pub fn scan_luatools_games(steam_dir: &Path) -> Vec<LuaToolsGame> {
                         }
                     }
 
+                    list.push(LuaToolsGame {
+                        appid: file_stem.to_string(),
+                        name: game_name,
+                        file_path: path,
+                    });
+                }
+            }
+        }
+    }
+
     list
 }
 

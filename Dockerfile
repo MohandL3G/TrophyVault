@@ -3,7 +3,7 @@
 # ------------------------------------------------------------------------------
 # Stage 1: Build trophyvault-server release binary
 # ------------------------------------------------------------------------------
-FROM rust:1.82-bookworm AS builder
+FROM rust:bookworm AS builder
 
 WORKDIR /usr/src/trophyvault
 

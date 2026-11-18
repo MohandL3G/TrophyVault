@@ -1,6 +1,6 @@
 [package]
 name = "trophyvault-core"
-version = "0.0.12"
+version = "0.1.0"
 edition = "2021"
 authors = ["MohandL3G"]
 description = "TrophyVault: Core library for data models, parsing, and passport generation"

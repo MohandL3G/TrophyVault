@@ -1,6 +1,6 @@
 [package]
 name = "trophyvault-server"
-version = "0.0.12"
+version = "0.1.0"
 edition = "2021"
 authors = ["MohandL3G"]
 description = "TrophyVault: Self-hosted web server and sync backend"

@@ -74,36 +74,57 @@ pub struct PassportOptions<'a> {
     pub selected_game: Option<&'a GameItem>,
 }
 
+/// Escape XML special characters (&, <, >, ", ') to prevent malformed SVG documents.
+pub fn escape_xml(input: &str) -> String {
+    let mut escaped = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
 /// Generates the SVG document for the achievements passport.
 pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions) -> String {
     let primary = options.theme.primary_color();
     let panel_border = options.theme.panel_border();
     let secondary = options.theme.secondary_color();
 
-    let username = if options.username.trim().is_empty() {
+    let raw_username = if options.username.trim().is_empty() {
         "MOHANDL3G"
     } else {
         options.username.trim()
     };
+    let username = escape_xml(raw_username);
 
     if let Some(game) = options.selected_game {
         // --- SINGLE GAME PASSPORT (e.g. Bloodborne, Palworld, Black Myth Wukong) ---
-        let passport_category = format!("{} PASSPORT", game.name.to_uppercase());
+        let raw_category = format!("{} PASSPORT", game.name.to_uppercase());
+        let passport_category = escape_xml(&raw_category);
+        let platform = escape_xml(&game.platform);
         let ovr = game.pct;
         let locked = game.total.saturating_sub(game.unlocked);
-        let status = if game.platinum || (game.total > 0 && game.unlocked == game.total) {
+        let status_raw = if game.platinum || (game.total > 0 && game.unlocked == game.total) {
             "100% PERFECT"
         } else if game.unlocked > 0 {
             "IN PROGRESS"
         } else {
             "NOT STARTED"
         };
+        let status = escape_xml(status_raw);
 
-        let title_line = if options.title.trim().is_empty() {
-            format!("Status: {}   •   Completion: {}%", status, ovr)
+        let raw_title = if options.title.trim().is_empty() {
+            format!("Status: {}   •   Completion: {}%", status_raw, ovr)
         } else {
             options.title.trim().to_string()
         };
+        let title_line = escape_xml(&raw_title);
 
         let playtime_str = if game.playtime_minutes > 0 {
             let hours = game.playtime_minutes / 60;
@@ -196,42 +217,42 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
 
     <!-- Item 1: Unlocked Achievements -->
     <g transform="translate(30, 110)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{MEDAL_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{MEDAL_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Achievements</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{unlocked} <tspan font-size="24" fill="#6a829e">/ {total}</tspan></text>
     </g>
 
     <!-- Item 2: Completion Rate -->
     <g transform="translate(400, 110)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{COMPASS_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{COMPASS_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Completion Rate</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="{primary}">{ovr}%</text>
     </g>
 
     <!-- Item 3: Status -->
     <g transform="translate(770, 110)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{TROPHY_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{TROPHY_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Clear Status</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{status}</text>
     </g>
 
     <!-- Item 4: Locked Remaining -->
     <g transform="translate(30, 355)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{CHECKLIST_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{CHECKLIST_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Locked Remaining</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{locked} <tspan font-size="24" fill="#6a829e">left</tspan></text>
     </g>
 
     <!-- Item 5: Platform Source -->
     <g transform="translate(400, 355)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{GAMEPAD_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{GAMEPAD_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Platform Source</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="34" font-weight="900" fill="#f0f6fc">{platform}</text>
     </g>
 
     <!-- Item 6: Total Playtime -->
     <g transform="translate(770, 355)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{CLOCK_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{CLOCK_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Total Playtime</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="{primary}">{playtime_str}</text>
     </g>
@@ -249,7 +270,7 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
             passport_category = passport_category,
             username = username,
             title_line = title_line,
-            platform = game.platform,
+            platform = platform,
             ovr = ovr,
             unlocked = game.unlocked,
             total = game.total,
@@ -269,11 +290,12 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
         let ovr = s.ovr_score;
         let completion_rate_str = format!("{:.1}%", s.completion_rate);
 
-        let title_line = if options.title.trim().is_empty() {
+        let raw_title = if options.title.trim().is_empty() {
             "Hunter of Yharnam   •   Trophy Hunter"
         } else {
             options.title.trim()
         };
+        let title_line = escape_xml(raw_title);
 
         let total_playtime_hours = s.total_playtime_minutes / 60;
         let total_playtime_mins = s.total_playtime_minutes % 60;
@@ -361,21 +383,21 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     <!-- Row 1 -->
     <!-- Item 1: Perfect Games -->
     <g transform="translate(30, 110)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{TROPHY_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{TROPHY_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Perfect Games (100%)</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{perfect_games} <tspan font-size="24" fill="#6a829e">/ {total_games}</tspan></text>
     </g>
 
     <!-- Item 2: Completion Rate -->
     <g transform="translate(400, 110)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{COMPASS_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{COMPASS_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Completion Rate</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="{primary}">{completion_rate}</text>
     </g>
 
     <!-- Item 3: Total Playtime -->
     <g transform="translate(770, 110)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{CLOCK_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{CLOCK_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Total Playtime</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="{primary}">{total_playtime}</text>
     </g>
@@ -383,21 +405,21 @@ pub fn generate_passport_svg(data: &AchievementsData, options: &PassportOptions)
     <!-- Row 2 -->
     <!-- Item 4: In Progress Games -->
     <g transform="translate(30, 355)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{GAMEPAD_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{GAMEPAD_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Games in Progress</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{in_progress_games} <tspan font-size="24" fill="#6a829e">active</tspan></text>
     </g>
 
     <!-- Item 5: Steam Achievements -->
     <g transform="translate(400, 355)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{STEAM_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{STEAM_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">Steam Achievements</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{steam_unlocked} <tspan font-size="24" fill="#6a829e">/ {steam_total}</tspan></text>
     </g>
 
     <!-- Item 6: PC Ports & Decomps -->
     <g transform="translate(770, 355)">
-      <g transform="translate(0, 10)" stroke="{primary}" fill="none">{EMULATOR_ICON}</g>
+      <g transform="translate(0, 10)" color="{primary}" stroke="{primary}" fill="none">{EMULATOR_ICON}</g>
       <text x="65" y="24" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" fill="#8da4be">PC Ports &amp; Decomps</text>
       <text x="65" y="75" font-family="system-ui, Segoe UI, Roboto, sans-serif" font-size="40" font-weight="900" fill="#f0f6fc">{emu_unlocked} <tspan font-size="24" fill="#6a829e">/ {emu_total}</tspan></text>
     </g>
@@ -457,6 +479,11 @@ pub fn get_font_db() -> Arc<fontdb::Database> {
         .get_or_init(|| {
             let mut db = fontdb::Database::new();
             db.load_system_fonts();
+            if let Some(face) = db.faces().find(|f| {
+                f.family == "Segoe UI" || f.family == "Roboto" || f.family == "DejaVu Sans" || f.family == "Arial"
+            }) {
+                db.set_sans_serif_family(&face.family);
+            }
             Arc::new(db)
         })
         .clone()
@@ -569,5 +596,47 @@ mod tests {
         assert!(!svg.contains("Game Identifier / ID"));
         assert!(!svg.contains("Cumulative Playtime"));
         assert!(!svg.contains("PROGRESS"));
+    }
+
+    #[test]
+    fn test_xml_escaping_special_characters() {
+        let input = "Ratchet & Clank <PlayStation 5> \"Collector's Edition\"";
+        let escaped = escape_xml(input);
+        assert_eq!(
+            escaped,
+            "Ratchet &amp; Clank &lt;PlayStation 5&gt; &quot;Collector&apos;s Edition&quot;"
+        );
+    }
+
+    #[test]
+    fn test_svg_generation_with_unescaped_entities() {
+        let game = GameItem {
+            name: "Dungeons & Dragons: Chronicles of Mystara <Arcade>".to_string(),
+            platform: "PC Port & Decomp".to_string(),
+            appid: Some("12345".to_string()),
+            unlocked: 10,
+            total: 20,
+            pct: 50,
+            platinum: false,
+            playtime_minutes: 120,
+            last_played: None,
+        };
+        let data = AchievementsData {
+            base_path: PathBuf::from("."),
+            preferences: Preferences::default(),
+            username: "Player & Co <Pro>".to_string(),
+            stats: sample_stats(),
+            games: vec![game.clone()],
+        };
+        let options = PassportOptions {
+            username: "Player & Co <Pro>",
+            title: "Hunter & Gatherer",
+            theme: PassportTheme::CyberpunkCyan,
+            selected_game: Some(&game),
+        };
+        let svg = generate_passport_svg(&data, &options);
+        assert!(svg.contains("&amp;"));
+        assert!(svg.contains("&lt;Arcade&gt;"));
+        assert!(!svg.contains("Player & Co <Pro>")); // Raw unescaped string must not appear
     }
 }

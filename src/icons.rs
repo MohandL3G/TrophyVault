@@ -45,7 +45,7 @@ pub const EMULATOR_ICON: &str = r#"
 <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="4" y="4" width="16" height="16" rx="2"/>
   <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
-  <polyline points="21 15 16 10 5 21"/>
+  <polyline points="20 15 16 10 5 20"/>
 </svg>
 "#;
 
@@ -64,6 +64,7 @@ pub const CLOCK_ICON: &str = r#"
 </svg>
 "#;
 
+#[allow(dead_code)]
 pub const STAR_SPARKLE: &str = r#"
 <svg viewBox="0 0 24 24" width="36" height="36" fill="currentColor">
   <path d="M12 0L14.5 9.5L24 12L14.5 14.5L12 24L9.5 14.5L0 12L9.5 9.5L12 0Z"/>

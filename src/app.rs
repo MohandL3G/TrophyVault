@@ -294,25 +294,44 @@ impl PassportApp {
     }
 
     fn save_png(&mut self, ctx: &egui::Context) {
-        self.generate_and_render_preview(ctx);
-        if let Some(svg) = &self.last_rendered_svg {
-            match render_svg_to_png(svg, 1200, 850) {
-                Ok(bytes) => {
-                    if let Some(parent) = self.output_path.parent() {
-                        let _ = fs::create_dir_all(parent);
+        if let Some(svg) = self.generate_svg() {
+            self.last_rendered_svg = Some(svg.clone());
+            // Single-pass render: render to Pixmap, encode PNG directly, and upload egui texture
+            match render_svg_to_pixmap(&svg, 1200, 850) {
+                Ok(pixmap) => {
+                    match pixmap.encode_png() {
+                        Ok(bytes) => {
+                            if let Some(parent) = self.output_path.parent() {
+                                let _ = fs::create_dir_all(parent);
+                            }
+                            if let Err(e) = fs::write(&self.output_path, bytes) {
+                                self.status_notification =
+                                    Some((format!("Failed to save image: {}", e), true));
+                            } else {
+                                self.status_notification = Some((
+                                    format!("✓ Passport saved to: {}", self.output_path.display()),
+                                    false,
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            self.status_notification =
+                                Some((format!("PNG Encode Error: {}", e), true));
+                        }
                     }
-                    if let Err(e) = fs::write(&self.output_path, bytes) {
-                        self.status_notification =
-                            Some((format!("Failed to save image: {}", e), true));
-                    } else {
-                        self.status_notification = Some((
-                            format!("✓ Passport saved to: {}", self.output_path.display()),
-                            false,
-                        ));
-                    }
+
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                        [1200, 850],
+                        pixmap.data(),
+                    );
+                    self.preview_texture = Some(ctx.load_texture(
+                        "passport_preview",
+                        color_image,
+                        egui::TextureOptions::LINEAR,
+                    ));
                 }
-                Err(e) => {
-                    self.status_notification = Some((format!("PNG Render Error: {}", e), true));
+                Err(err) => {
+                    self.status_notification = Some((format!("Render error: {}", err), true));
                 }
             }
         }
@@ -752,18 +771,24 @@ impl PassportApp {
                         ui.add_space(4.0);
 
                         ui.label("Player Tag / Username:");
-                        if ui.text_edit_singleline(&mut self.username).changed() {
+                        let user_res = ui.text_edit_singleline(&mut self.username);
+                        if user_res.changed() {
+                            selection_changed = true;
+                        }
+                        if user_res.lost_focus() {
                             self.db.preferences.username = self.username.clone();
                             let _ = save_database(&self.db);
-                            selection_changed = true;
                         }
 
                         ui.add_space(4.0);
                         ui.label("Passport Subtitle:");
-                        if ui.text_edit_singleline(&mut self.title_line).changed() {
+                        let title_res = ui.text_edit_singleline(&mut self.title_line);
+                        if title_res.changed() {
+                            selection_changed = true;
+                        }
+                        if title_res.lost_focus() {
                             self.db.preferences.title_line = self.title_line.clone();
                             let _ = save_database(&self.db);
-                            selection_changed = true;
                         }
 
                         ui.horizontal(|ui| {

@@ -480,9 +480,13 @@ pub fn get_font_db() -> Arc<fontdb::Database> {
             let mut db = fontdb::Database::new();
             db.load_system_fonts();
             if let Some(face) = db.faces().find(|f| {
-                f.family == "Segoe UI" || f.family == "Roboto" || f.family == "DejaVu Sans" || f.family == "Arial"
+                f.families.iter().any(|(name, _)| {
+                    name == "Segoe UI" || name == "Roboto" || name == "DejaVu Sans" || name == "Arial"
+                })
             }) {
-                db.set_sans_serif_family(&face.family);
+                if let Some((first_name, _)) = face.families.first() {
+                    db.set_sans_serif_family(first_name);
+                }
             }
             Arc::new(db)
         })

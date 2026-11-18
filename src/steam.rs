@@ -326,8 +326,8 @@ pub fn parse_localconfig_str(content: &str) -> HashMap<String, SteamAppUsage> {
     let mut current_appid: Option<String> = None;
     let mut current_usage = SteamAppUsage::default();
     let mut in_apps_section = false;
-    let mut brace_depth = 0;
-    let mut apps_depth = 0;
+    let mut brace_depth: usize = 0;
+    let mut apps_depth: usize = 0;
 
     for line in content.lines() {
         let trimmed = line.trim();

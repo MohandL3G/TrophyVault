@@ -1041,15 +1041,34 @@ mod tests {
 
         std::thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
-                let mut buffer = [0u8; 2048];
-                let n = stream.read(&mut buffer).unwrap_or(0);
-                let request = String::from_utf8_lossy(&buffer[..n]);
+                let mut buffer = [0u8; 4096];
+                let mut request = Vec::new();
+                while let Ok(n) = stream.read(&mut buffer) {
+                    if n == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..n]);
+                    if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
 
-                assert!(request.contains("POST /api/sync"));
-                assert!(request.contains("Authorization: Bearer test-secret"));
+                let req_str = String::from_utf8_lossy(&request);
+                assert!(req_str.contains("POST /api/sync"));
+                assert!(req_str.contains("Authorization: Bearer test-secret"));
 
-                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
+                let response = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
                 let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+
+                // Drain any remaining incoming data so TCP socket doesn't send RST on Windows
+                let mut drain = [0u8; 1024];
+                while let Ok(n) = stream.read(&mut drain) {
+                    if n == 0 {
+                        break;
+                    }
+                }
             }
         });
 
@@ -1069,7 +1088,7 @@ mod tests {
         };
 
         let result = sync_to_remote(&db, &settings);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Expected Ok response, got: {:?}", result);
         let msg = result.unwrap();
         assert!(msg.contains("200"));
         assert!(msg.contains("{\"status\":\"ok\"}"));

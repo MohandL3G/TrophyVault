@@ -25,6 +25,54 @@ pub struct LibraryDatabase {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub server_url: String, // e.g. "https://vault.mohandl3g.ly"
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub auto_sync_on_exit: bool,
+    #[serde(default)]
+    pub last_sync_timestamp: Option<u64>,
+    #[serde(default)]
+    pub last_sync_status: Option<String>,
+}
+
+impl Default for SyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_url: String::new(),
+            api_key: String::new(),
+            auto_sync_on_exit: false,
+            last_sync_timestamp: None,
+            last_sync_status: None,
+        }
+    }
+}
+
+impl SyncSettings {
+    pub fn is_configured(&self) -> bool {
+        !self.server_url.trim().is_empty() && !self.api_key.trim().is_empty()
+    }
+
+    pub fn formatted_api_url(&self) -> Result<String, String> {
+        let base_url = self.server_url.trim().trim_end_matches('/');
+        if base_url.is_empty() {
+            return Err("Server URL cannot be empty".to_string());
+        }
+        let url = if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
+            format!("https://{}/api/sync", base_url)
+        } else {
+            format!("{}/api/sync", base_url)
+        };
+        Ok(url)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabasePreferences {
     #[serde(default = "default_username")]
     pub username: String,
@@ -37,6 +85,8 @@ pub struct DatabasePreferences {
     pub export_path: Option<String>,
     #[serde(default = "default_true")]
     pub auto_sync: bool,
+    #[serde(default)]
+    pub sync_settings: Option<SyncSettings>,
 }
 
 fn default_username() -> String {
@@ -62,6 +112,7 @@ impl Default for DatabasePreferences {
             steam_id: None,
             export_path: None,
             auto_sync: true,
+            sync_settings: None,
         }
     }
 }
@@ -800,11 +851,68 @@ pub fn database_to_achievements_data(db: &LibraryDatabase) -> AchievementsData {
         preferences: Preferences {
             steam_official_steam_id: db.preferences.steam_id.clone(),
             watched_folders: Vec::new(),
+            sync_settings: db.preferences.sync_settings.clone(),
         },
         username,
         stats,
         games,
     }
+}
+
+/// Sends the local database to the remote TrophyVault server via POST `/api/sync`.
+///
+/// Sends `POST {server_url}/api/sync` with header `Authorization: Bearer {api_key}`
+/// and JSON body of `db`. Handles connection errors, non-200 responses, and returns success message.
+pub fn sync_to_remote(db: &LibraryDatabase, settings: &SyncSettings) -> Result<String, String> {
+    let url = settings.formatted_api_url()?;
+
+    if settings.api_key.trim().is_empty() {
+        return Err("API key is not configured".to_string());
+    }
+
+    let response = ureq::post(&url)
+        .set("Authorization", &format!("Bearer {}", settings.api_key.trim()))
+        .set("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send_json(db);
+
+    match response {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.into_string().unwrap_or_default();
+            Ok(format!("HTTP {}: {}", status, body))
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let body = resp.into_string().unwrap_or_else(|_| "Unknown error".to_string());
+            Err(format!("Server returned HTTP {}: {}", code, body))
+        }
+        Err(ureq::Error::Transport(err)) => {
+            Err(format!("Connection error: {}", err))
+        }
+    }
+}
+
+/// Loads or creates the database for the currently active Steam user account.
+pub fn load_active_user_database() -> LibraryDatabase {
+    let steam_dir = find_steam_dir();
+    let detected_users = if let Some(s_dir) = &steam_dir {
+        crate::steam::detect_steam_users(s_dir)
+    } else {
+        Vec::new()
+    };
+
+    let active_user = detected_users
+        .iter()
+        .find(|u| u.is_most_recent)
+        .or_else(|| detected_users.iter().find(|u| u.steam_id == "462943940"))
+        .or_else(|| detected_users.first());
+
+    let initial_steam_id = active_user.map(|u| u.steam_id.as_str());
+    let mut db = load_or_create_database_for_user(initial_steam_id);
+    if db.preferences.steam_id.is_none() && initial_steam_id.is_some() {
+        db.preferences.steam_id = initial_steam_id.map(|s| s.to_string());
+    }
+    db
 }
 
 #[cfg(test)]
@@ -839,5 +947,153 @@ mod tests {
         assert_eq!(parsed.version, 1);
         assert_eq!(parsed.last_updated, 1700000000);
         assert!(parsed.games.is_empty());
+        assert!(parsed.preferences.sync_settings.is_none());
+    }
+
+    #[test]
+    fn test_sync_settings_defaults_and_serialization() {
+        let default_settings = SyncSettings::default();
+        assert!(!default_settings.enabled);
+        assert!(default_settings.server_url.is_empty());
+        assert!(default_settings.api_key.is_empty());
+        assert!(!default_settings.auto_sync_on_exit);
+        assert!(default_settings.last_sync_timestamp.is_none());
+        assert!(default_settings.last_sync_status.is_none());
+        assert!(!default_settings.is_configured());
+
+        let json = serde_json::to_string(&default_settings).expect("Must serialize");
+        let parsed: SyncSettings = serde_json::from_str(&json).expect("Must deserialize");
+        assert_eq!(parsed.enabled, default_settings.enabled);
+        assert_eq!(parsed.server_url, default_settings.server_url);
+
+        // Deserializing empty JSON object should yield defaults
+        let from_empty: SyncSettings = serde_json::from_str("{}").expect("Must deserialize empty");
+        assert!(!from_empty.enabled);
+        assert!(from_empty.server_url.is_empty());
+    }
+
+    #[test]
+    fn test_sync_settings_url_formatting() {
+        let mut s = SyncSettings {
+            server_url: "https://vault.mohandl3g.ly".to_string(),
+            api_key: "test-token".to_string(),
+            ..Default::default()
+        };
+        assert!(s.is_configured());
+        assert_eq!(s.formatted_api_url().unwrap(), "https://vault.mohandl3g.ly/api/sync");
+
+        // Trailing slash
+        s.server_url = "https://vault.mohandl3g.ly/".to_string();
+        assert_eq!(s.formatted_api_url().unwrap(), "https://vault.mohandl3g.ly/api/sync");
+
+        // Missing scheme defaults to https
+        s.server_url = "vault.mohandl3g.ly".to_string();
+        assert_eq!(s.formatted_api_url().unwrap(), "https://vault.mohandl3g.ly/api/sync");
+
+        // HTTP scheme preserved
+        s.server_url = "http://localhost:5050".to_string();
+        assert_eq!(s.formatted_api_url().unwrap(), "http://localhost:5050/api/sync");
+
+        // Empty URL returns Err
+        s.server_url = "   ".to_string();
+        assert!(!s.is_configured());
+        assert!(s.formatted_api_url().is_err());
+    }
+
+    #[test]
+    fn test_database_preferences_sync_settings_backwards_compatibility() {
+        let legacy_json = r#"{
+            "username": "Hunter",
+            "title_line": "Trophy Hunter",
+            "theme": "CyberpunkCyan",
+            "auto_sync": true
+        }"#;
+
+        let prefs: DatabasePreferences = serde_json::from_str(legacy_json).expect("Must deserialize legacy");
+        assert!(prefs.sync_settings.is_none());
+
+        let mut prefs_with_sync = prefs;
+        prefs_with_sync.sync_settings = Some(SyncSettings {
+            enabled: true,
+            server_url: "https://vault.mohandl3g.ly".to_string(),
+            api_key: "secret".to_string(),
+            auto_sync_on_exit: true,
+            last_sync_timestamp: Some(1730000000),
+            last_sync_status: Some("Success".to_string()),
+        });
+
+        let json = serde_json::to_string(&prefs_with_sync).expect("Must serialize");
+        let parsed: DatabasePreferences = serde_json::from_str(&json).expect("Must deserialize");
+        assert!(parsed.sync_settings.is_some());
+        let s = parsed.sync_settings.unwrap();
+        assert!(s.enabled);
+        assert_eq!(s.server_url, "https://vault.mohandl3g.ly");
+        assert_eq!(s.last_sync_timestamp, Some(1730000000));
+    }
+
+    #[test]
+    fn test_sync_to_remote_mock_server() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("Must bind ephemeral port");
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0u8; 2048];
+                let n = stream.read(&mut buffer).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buffer[..n]);
+
+                assert!(request.contains("POST /api/sync"));
+                assert!(request.contains("Authorization: Bearer test-secret"));
+
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+
+        let db = LibraryDatabase {
+            version: 1,
+            last_updated: 1700000000,
+            preferences: DatabasePreferences::default(),
+            manual_games: Vec::new(),
+            games: HashMap::new(),
+        };
+
+        let settings = SyncSettings {
+            enabled: true,
+            server_url: format!("http://127.0.0.1:{}", port),
+            api_key: "test-secret".to_string(),
+            ..Default::default()
+        };
+
+        let result = sync_to_remote(&db, &settings);
+        assert!(result.is_ok());
+        let msg = result.unwrap();
+        assert!(msg.contains("200"));
+        assert!(msg.contains("{\"status\":\"ok\"}"));
+    }
+
+    #[test]
+    fn test_sync_to_remote_unreachable_server_returns_error() {
+        let db = LibraryDatabase {
+            version: 1,
+            last_updated: 1700000000,
+            preferences: DatabasePreferences::default(),
+            manual_games: Vec::new(),
+            games: HashMap::new(),
+        };
+
+        let settings = SyncSettings {
+            enabled: true,
+            server_url: "http://127.0.0.1:59999".to_string(),
+            api_key: "test-secret".to_string(),
+            ..Default::default()
+        };
+
+        let result = sync_to_remote(&db, &settings);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Connection error"));
     }
 }

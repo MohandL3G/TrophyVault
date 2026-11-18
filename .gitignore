@@ -4,6 +4,8 @@
 *.svg
 !assets/*.png
 !assets/*.svg
+!crates/desktop/assets/*.png
+!crates/desktop/assets/*.svg
 .DS_Store
 Thumbs.db
 *.log

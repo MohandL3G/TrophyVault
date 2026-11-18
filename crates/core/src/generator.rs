@@ -65,8 +65,26 @@ impl PassportTheme {
             PassportTheme::SteamPurple => "#481367",
         }
     }
+
+    pub fn parse_theme(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "trophygold" | "gold" => PassportTheme::TrophyGold,
+            "bloodbornecrimson" | "crimson" | "bloodborne" => PassportTheme::BloodborneCrimson,
+            "emeraldmatrix" | "emerald" | "matrix" => PassportTheme::EmeraldMatrix,
+            "steampurple" | "purple" | "violet" | "neon" => PassportTheme::SteamPurple,
+            _ => PassportTheme::CyberpunkCyan,
+        }
+    }
 }
 
+impl std::str::FromStr for PassportTheme {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::parse_theme(s))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct PassportOptions<'a> {
     pub username: &'a str,
     pub title: &'a str,
@@ -88,6 +106,18 @@ pub fn escape_xml(input: &str) -> String {
         }
     }
     escaped
+}
+
+/// Generates the overall library passport SVG.
+pub fn generate_overall_passport_svg(data: &AchievementsData, options: &PassportOptions) -> String {
+    let mut opts = options.clone();
+    opts.selected_game = None;
+    generate_passport_svg(data, &opts)
+}
+
+/// Generates the single game passport SVG.
+pub fn generate_single_game_passport_svg(data: &AchievementsData, options: &PassportOptions) -> String {
+    generate_passport_svg(data, options)
 }
 
 /// Generates the SVG document for the achievements passport.

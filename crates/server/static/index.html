@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TrophyVault | Hunter Showcase & Achievements Passport</title>
+  <meta name="description" content="TrophyVault: Self-hosted achievements passport, 100% completion hall of fame, and gaming stats showcase.">
+  <meta name="theme-color" content="#0d1117">
+  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300f0ff'><path d='M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.45 1-1 1H8c-.55 0-1 .45-1 1v1c0 .55.45 1 1 1h8c.55 0 1-.45 1-1v-1c0-.55-.45-1-1-1h-1c-.55 0-1-.45-1-1v-2.34M18 4H6v6c0 3.31 2.69 6 6 6s6-2.69 6-6V4z'/></svg>">
+</head>
+<body class="hud-body">
+  <!-- Ambient background glow elements -->
+  <div class="hud-ambient-glow glow-cyan" aria-hidden="true"></div>
+  <div class="hud-ambient-glow glow-gold" aria-hidden="true"></div>
+
+  <!-- Main Container -->
+  <div class="hud-app">
+    <!-- Header Bar -->
+    <header class="hud-header">
+      <div class="hud-header-brand">
+        <div class="hud-logo-badge">
+          <svg class="hud-icon logo-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/>
+            <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/>
+            <path d="M4 22h16"/>
+            <path d="M10 14.66V17c0 .55-.45 1-1 1H8c-.55 0-1 .45-1 1v1c0 .55.45 1 1 1h8c.55 0 1-.45 1-1v-1c0-.55-.45-1-1-1h-1c-.55 0-1-.45-1-1v-2.34"/>
+            <path d="M18 4H6v6c0 3.31 2.69 6 6 6s6-2.69 6-6V4z"/>
+          </svg>
+        </div>
+        <div class="hud-title-wrap">
+          <div class="hud-title-row">
+            <h1 class="hud-title">TROPHY<span class="hud-highlight-cyan">VAULT</span></h1>
+            <span class="hud-badge-version">v0.0.12</span>
+          </div>
+          <span class="hud-subtitle">ACHIEVEMENTS PASSPORT & VAULT SHOWCASE</span>
+        </div>
+      </div>
+
+      <div class="hud-header-actions">
+        <!-- Live API Status Indicator -->
+        <div class="hud-status-chip" id="apiStatusChip" title="API Status">
+          <span class="hud-status-dot pulse" id="apiStatusDot"></span>
+          <span class="hud-status-text" id="apiStatusText">CONNECTING...</span>
+        </div>
+
+        <!-- Active Persona Chip -->
+        <div class="hud-persona-chip" id="personaChip">
+          <div class="hud-persona-avatar">
+            <span id="personaInitial">H</span>
+          </div>
+          <div class="hud-persona-meta">
+            <span class="hud-persona-label">HUNTER</span>
+            <span class="hud-persona-name" id="personaName">MOHANDL3G</span>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <button class="hud-btn hud-btn-outline" id="refreshBtn" title="Refresh library data">
+          <svg class="hud-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+          </svg>
+          <span class="btn-text">Refresh</span>
+        </button>
+
+        <button class="hud-btn hud-btn-primary glow-button" id="openShareModalBtn" title="Share & Embed Passport Card">
+          <svg class="hud-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="18" cy="5" r="3"/>
+            <circle cx="6" cy="12" r="3"/>
+            <circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          <span class="btn-text">Share & Embed</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Layout -->
+    <main class="hud-main">
+      <!-- Hero Stats Banner -->
+      <section class="hud-hero-banner" id="heroStatsSection">
+        <!-- OVR Rating Hex Badge -->
+        <div class="hud-ovr-card">
+          <div class="hud-ovr-hex">
+            <div class="hud-ovr-inner">
+              <span class="hud-ovr-label">OVR SCORE</span>
+              <span class="hud-ovr-val" id="ovrScoreVal">--</span>
+              <span class="hud-ovr-tier" id="ovrTierVal">CALCULATING</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stats Grid -->
+        <div class="hud-stats-grid">
+          <!-- Total Games -->
+          <div class="hud-stat-box">
+            <div class="hud-stat-icon-wrap icon-cyan">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="6" y1="12" x2="10" y2="12"/>
+                <line x1="8" y1="10" x2="8" y2="14"/>
+                <line x1="15" y1="13" x2="15.01" y2="13"/>
+                <line x1="18" y1="11" x2="18.01" y2="11"/>
+                <rect x="2" y="6" width="20" height="12" rx="6"/>
+              </svg>
+            </div>
+            <div class="hud-stat-content">
+              <span class="hud-stat-val" id="statTotalGames">--</span>
+              <span class="hud-stat-lbl">TOTAL GAMES</span>
+            </div>
+          </div>
+
+          <!-- 100% Completions -->
+          <div class="hud-stat-box">
+            <div class="hud-stat-icon-wrap icon-gold">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M18 4H6v6c0 3.31 2.69 6 6 6s6-2.69 6-6V4z"/>
+              </svg>
+            </div>
+            <div class="hud-stat-content">
+              <span class="hud-stat-val hud-text-gold" id="statCompletions">--</span>
+              <span class="hud-stat-lbl">100% COMPLETIONS</span>
+            </div>
+          </div>
+
+          <!-- Completion Rate -->
+          <div class="hud-stat-box">
+            <div class="hud-stat-icon-wrap icon-crimson">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="8" r="6"/>
+                <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/>
+              </svg>
+            </div>
+            <div class="hud-stat-content">
+              <span class="hud-stat-val hud-text-crimson" id="statCompletionRate">--%</span>
+              <span class="hud-stat-lbl">COMPLETION RATE</span>
+              <div class="hud-mini-progress">
+                <div class="hud-mini-fill" id="statCompletionFill" style="width: 0%;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cumulative Playtime -->
+          <div class="hud-stat-box">
+            <div class="hud-stat-icon-wrap icon-purple">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+            </div>
+            <div class="hud-stat-content">
+              <span class="hud-stat-val hud-text-purple" id="statPlaytime">--</span>
+              <span class="hud-stat-lbl">CUMULATIVE PLAYTIME</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 100% Hall of Fame Showcase -->
+      <section class="hud-section" id="hallOfFameSection">
+        <div class="hud-section-header">
+          <div class="hud-section-title-wrap">
+            <div class="hud-badge-gold">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+              </svg>
+              <span>PLATINUM SHOWCASE</span>
+            </div>
+            <h2 class="hud-section-title">100% HALL OF FAME</h2>
+            <p class="hud-section-desc">Mastered titles with every trophy and achievement completed.</p>
+          </div>
+          <div class="hud-hof-count" id="hofCountBadge">0 TITLES</div>
+        </div>
+
+        <div class="hud-hof-grid" id="hofGrid">
+          <!-- Dynamically populated completed cards -->
+          <div class="hud-hof-empty" id="hofEmptyState" style="display: none;">
+            <p>No 100% completed games recorded yet. Keep hunting!</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Complete Games Library -->
+      <section class="hud-section" id="librarySection">
+        <div class="hud-section-header">
+          <div class="hud-section-title-wrap">
+            <h2 class="hud-section-title">GAMES ARCHIVE</h2>
+            <p class="hud-section-desc">Browse, search, and inspect your unified cross-platform trophy collection.</p>
+          </div>
+          <div class="hud-library-count" id="libraryCountBadge">0 GAMES</div>
+        </div>
+
+        <!-- Library Controls Toolbar -->
+        <div class="hud-toolbar">
+          <!-- Real-time Search Box -->
+          <div class="hud-search-box">
+            <svg class="hud-search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="text" id="searchInput" class="hud-input" placeholder="Search by game title or AppID..." autocomplete="off">
+            <button class="hud-search-clear" id="searchClearBtn" aria-label="Clear search" style="display: none;">&times;</button>
+          </div>
+
+          <!-- Platform Filter Buttons -->
+          <div class="hud-filter-group" id="platformFilters" role="radiogroup" aria-label="Filter by Platform">
+            <button class="hud-filter-btn active" data-platform="all">All</button>
+            <button class="hud-filter-btn" data-platform="steam">Steam</button>
+            <button class="hud-filter-btn" data-platform="luatools">LuaTools</button>
+            <button class="hud-filter-btn" data-platform="non-steam">Non-Steam</button>
+            <button class="hud-filter-btn" data-platform="ports">Ports</button>
+          </div>
+
+          <!-- Sort & View Mode Toggles -->
+          <div class="hud-toolbar-right">
+            <div class="hud-sort-wrap">
+              <label for="sortSelect" class="hud-sort-label">SORT:</label>
+              <select id="sortSelect" class="hud-select">
+                <option value="playtime_desc">Playtime (High to Low)</option>
+                <option value="pct_desc">Completion % (High to Low)</option>
+                <option value="pct_asc">Completion % (Low to High)</option>
+                <option value="name_asc">Title (A - Z)</option>
+                <option value="unlocked_desc">Unlocked Trophies</option>
+              </select>
+            </div>
+
+            <div class="hud-view-toggle" role="group" aria-label="View toggle">
+              <button class="hud-view-btn active" id="viewGridBtn" title="Grid View" aria-pressed="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                  <path d="M3 3h7v7H3zm11 0h7v7h-7zm0 11h7v7h-7zM3 14h7v7H3z"/>
+                </svg>
+              </button>
+              <button class="hud-view-btn" id="viewTableBtn" title="Table View" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                  <path d="M3 4h18v2H3zm0 7h18v2H3zm0 7h18v2H3z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Games Grid View -->
+        <div class="hud-games-grid" id="gamesGrid">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Games Table View -->
+        <div class="hud-games-table-container" id="gamesTableContainer" style="display: none;">
+          <table class="hud-table" id="gamesTable">
+            <thead>
+              <tr>
+                <th class="col-game">GAME</th>
+                <th class="col-platform">PLATFORM</th>
+                <th class="col-progress">PROGRESS</th>
+                <th class="col-trophies">TROPHIES</th>
+                <th class="col-playtime">PLAYTIME</th>
+                <th class="col-status">STATUS</th>
+                <th class="col-action">VIEW</th>
+              </tr>
+            </thead>
+            <tbody id="gamesTableBody">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Empty State / Fallback -->
+        <div class="hud-empty-state" id="emptyState" style="display: none;">
+          <div class="hud-empty-icon-box">
+            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="#00f0ff" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
+          <h3 class="hud-empty-title">No Games Synced Yet</h3>
+          <p class="hud-empty-desc">
+            Your TrophyVault library is currently unpopulated or no games matched your search filter.
+            Sync your Steam account, LuaTools shortcuts, or Bloodborne PC Port saves to showcase your passport!
+          </p>
+          <div class="hud-empty-terminal">
+            <div class="hud-terminal-header">
+              <span class="hud-terminal-dot"></span>
+              <span class="hud-terminal-dot"></span>
+              <span class="hud-terminal-dot"></span>
+              <span class="hud-terminal-title">TERMINAL COMMAND</span>
+            </div>
+            <div class="hud-terminal-body">
+              <code>TrophyVault --sync</code>
+              <button class="hud-copy-cli-btn" id="copyCliBtn" title="Copy sync command">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                <span>Copy</span>
+              </button>
+            </div>
+          </div>
+          <button class="hud-btn hud-btn-outline" id="emptyRetryBtn">Check For Updates</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="hud-footer">
+      <div class="hud-footer-left">
+        <span class="hud-footer-brand">TROPHY<span class="hud-highlight-cyan">VAULT</span> SERVER</span>
+        <span class="hud-footer-divider">•</span>
+        <span class="hud-footer-desc">Self-Hosted Achievements Passport & Embed Engine</span>
+      </div>
+      <div class="hud-footer-right">
+        <span class="hud-footer-tag">DARK HUD SPEC 2.0</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Game Detail Modal -->
+  <div class="hud-modal-backdrop" id="gameModal" role="dialog" aria-modal="true" aria-labelledby="modalGameTitle" style="display: none;">
+    <div class="hud-modal-card">
+      <button class="hud-modal-close" id="gameModalCloseBtn" aria-label="Close dialog">&times;</button>
+      
+      <!-- Modal Banner Header -->
+      <div class="hud-modal-banner" id="modalGameBanner">
+        <div class="hud-modal-banner-overlay"></div>
+        <div class="hud-modal-banner-content">
+          <div class="hud-modal-platform-badge" id="modalGamePlatform">PLATFORM</div>
+          <h2 class="hud-modal-title" id="modalGameTitle">Game Title</h2>
+          <div class="hud-modal-meta-row">
+            <span class="hud-modal-appid" id="modalGameAppid">AppID: 0</span>
+            <span class="hud-modal-bullet">•</span>
+            <span class="hud-modal-playtime" id="modalGamePlaytime">0h 0m</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal Quick Stats Bar -->
+      <div class="hud-modal-stats-bar">
+        <div class="hud-modal-stat-item">
+          <span class="stat-lbl">PROGRESS</span>
+          <span class="stat-val" id="modalGamePct">0%</span>
+        </div>
+        <div class="hud-modal-stat-item">
+          <span class="stat-lbl">TROPHIES</span>
+          <span class="stat-val" id="modalGameTrophies">0 / 0</span>
+        </div>
+        <div class="hud-modal-stat-item">
+          <span class="stat-lbl">STATUS</span>
+          <span class="stat-val" id="modalGameStatus">In Progress</span>
+        </div>
+      </div>
+
+      <!-- Modal Progress Bar -->
+      <div class="hud-modal-progress-wrap">
+        <div class="hud-modal-progress-bar">
+          <div class="hud-modal-progress-fill" id="modalGameProgressFill" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <!-- Trophy Filter & List -->
+      <div class="hud-modal-trophies-section">
+        <div class="hud-trophy-filter-row">
+          <h3 class="hud-trophy-heading">TROPHY MANIFEST</h3>
+          <div class="hud-trophy-filter-pills" id="modalTrophyFilterPills">
+            <button class="pill active" data-filter="all">All (<span id="countAllTrophies">0</span>)</button>
+            <button class="pill" data-filter="unlocked">Unlocked (<span id="countUnlockedTrophies">0</span>)</button>
+            <button class="pill" data-filter="locked">Locked (<span id="countLockedTrophies">0</span>)</button>
+          </div>
+        </div>
+
+        <div class="hud-trophies-list" id="modalTrophiesList">
+          <!-- Dynamic Trophy Entries -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share & Embed Modal -->
+  <div class="hud-modal-backdrop" id="shareModal" role="dialog" aria-modal="true" aria-labelledby="shareModalTitle" style="display: none;">
+    <div class="hud-modal-card hud-share-modal-card">
+      <button class="hud-modal-close" id="shareModalCloseBtn" aria-label="Close dialog">&times;</button>
+      
+      <div class="hud-share-header">
+        <div class="hud-badge-cyan">DYNAMIC EMBEDS</div>
+        <h2 class="hud-modal-title" id="shareModalTitle">Share & Embed Passport</h2>
+        <p class="hud-share-desc">Live vector SVG cards and compact badges for GitHub profiles, Discord, or portfolio sites.</p>
+      </div>
+
+      <div class="hud-share-content-grid">
+        <!-- Left: Live Preview Frame -->
+        <div class="hud-share-preview-panel">
+          <div class="hud-preview-frame-wrap">
+            <div class="hud-preview-header">
+              <span class="hud-preview-dot dot-red"></span>
+              <span class="hud-preview-dot dot-yellow"></span>
+              <span class="hud-preview-dot dot-green"></span>
+              <span class="hud-preview-url" id="previewUrlDisplay">/api/passport.svg?theme=cyberpunk</span>
+            </div>
+            <div class="hud-preview-body" id="previewContainer">
+              <div class="hud-preview-spinner" id="previewSpinner" style="display: none;">
+                <div class="spinner"></div>
+                <span>RENDERING SVG...</span>
+              </div>
+              <img id="passportLiveImg" class="hud-live-passport-img" src="/api/passport.svg?theme=cyberpunk" alt="Live Passport Preview">
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Embed Configuration & Copy Snippets -->
+        <div class="hud-share-config-panel">
+          <!-- Theme Selector -->
+          <div class="hud-config-group">
+            <label class="hud-config-label">PASSPORT THEME</label>
+            <div class="hud-theme-chips" id="themeChips">
+              <button class="hud-theme-chip active" data-theme="cyberpunk" style="--chip-color: #00f0ff;">
+                <span class="chip-dot"></span>Cyberpunk
+              </button>
+              <button class="hud-theme-chip" data-theme="gold" style="--chip-color: #ffd700;">
+                <span class="chip-dot"></span>Gold
+              </button>
+              <button class="hud-theme-chip" data-theme="bloodborne" style="--chip-color: #ff3366;">
+                <span class="chip-dot"></span>Bloodborne
+              </button>
+              <button class="hud-theme-chip" data-theme="matrix" style="--chip-color: #00ff88;">
+                <span class="chip-dot"></span>Matrix
+              </button>
+              <button class="hud-theme-chip" data-theme="violet" style="--chip-color: #bb86fc;">
+                <span class="chip-dot"></span>Violet
+              </button>
+            </div>
+          </div>
+
+          <!-- Format & Mode Selector -->
+          <div class="hud-config-row">
+            <div class="hud-config-group flex-1">
+              <label class="hud-config-label">CARD FORMAT</label>
+              <select id="embedFormatSelect" class="hud-select">
+                <option value="passport">Overall Passport (1200×850)</option>
+                <option value="badge">Compact Badge (400×100)</option>
+                <option value="single">Single Game Passport</option>
+              </select>
+            </div>
+
+            <div class="hud-config-group flex-1" id="singleGameGroup" style="display: none;">
+              <label class="hud-config-label">TARGET GAME</label>
+              <select id="singleGameSelect" class="hud-select">
+                <!-- Dynamically populated from loaded games -->
+              </select>
+            </div>
+          </div>
+
+          <!-- Embed Code Snippets -->
+          <div class="hud-snippets-list">
+            <!-- GitHub Profile Markdown -->
+            <div class="hud-snippet-item">
+              <div class="hud-snippet-head">
+                <span class="snippet-type">GitHub Profile Markdown</span>
+                <button class="hud-copy-btn" data-target="ghMarkdown">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <input type="text" readonly id="ghMarkdownSnippet" class="hud-snippet-input">
+            </div>
+
+            <!-- Compact Badge Markdown -->
+            <div class="hud-snippet-item">
+              <div class="hud-snippet-head">
+                <span class="snippet-type">Compact Badge Markdown</span>
+                <button class="hud-copy-btn" data-target="badgeMarkdown">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <input type="text" readonly id="badgeMarkdownSnippet" class="hud-snippet-input">
+            </div>
+
+            <!-- HTML <img> Tag -->
+            <div class="hud-snippet-item">
+              <div class="hud-snippet-head">
+                <span class="snippet-type">HTML Image Tag</span>
+                <button class="hud-copy-btn" data-target="htmlTag">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <input type="text" readonly id="htmlTagSnippet" class="hud-snippet-input">
+            </div>
+
+            <!-- Direct SVG URL -->
+            <div class="hud-snippet-item">
+              <div class="hud-snippet-head">
+                <span class="snippet-type">Direct SVG URL</span>
+                <button class="hud-copy-btn" data-target="directUrl">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <input type="text" readonly id="directUrlSnippet" class="hud-snippet-input">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="hud-toast-container" id="toastContainer" aria-live="polite"></div>
+
+  <!-- ES Modules -->
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

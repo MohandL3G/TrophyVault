@@ -26,10 +26,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Unit Tests
-        run: cargo test --verbose
+        run: cargo test --verbose --workspace
 
       - name: Build Release Binary
-        run: cargo build --release --verbose
+        run: cargo build --release -p trophyvault --verbose
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
@@ -58,10 +58,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Unit Tests
-        run: cargo test --verbose
+        run: cargo test --verbose --workspace
 
       - name: Build Release Binary
-        run: cargo build --release --verbose
+        run: cargo build --release -p trophyvault --verbose
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4

@@ -262,10 +262,8 @@ pub fn detect_steam_users(steam_dir: &Path) -> Vec<SteamUserAccount> {
 /// Detect the active Steam user ID from `loginusers.vdf` or `userdata/`.
 pub fn find_active_steam_id(steam_dir: &Path) -> Option<String> {
     let users = detect_steam_users(steam_dir);
-    // Prefer the active/most recent account, with fallback to 462943940 if present
+    // Prefer the active/most recent account, with fallback to first detected user
     if let Some(user) = users.iter().find(|u| u.is_most_recent) {
-        Some(user.steam_id.clone())
-    } else if let Some(user) = users.iter().find(|u| u.steam_id == "462943940") {
         Some(user.steam_id.clone())
     } else {
         users.first().map(|u| u.steam_id.clone())
@@ -284,16 +282,18 @@ fn insert_dual_keyed(results: &mut HashMap<String, SteamAppUsage>, appid: String
         }
     }
 
-    // 3. If it parses as unsigned u64, index its signed 32-bit and lower-32 equivalents
+    // 3. If it parses as unsigned u64, index its signed 32-bit and 64-bit shortcut equivalents
     if let Ok(unsigned_val) = appid.parse::<u64>() {
         if unsigned_val > i32::MAX as u64 && unsigned_val <= u32::MAX as u64 {
             let signed_32 = (unsigned_val as u32) as i32;
             results.insert(signed_32.to_string(), usage.clone());
         } else if unsigned_val > u32::MAX as u64 {
+            let upper_32 = (unsigned_val >> 32) as u32;
             let lower_32 = (unsigned_val & 0xFFFF_FFFF) as u32;
-            let signed_32 = lower_32 as i32;
+            results.insert(upper_32.to_string(), usage.clone());
+            results.insert((upper_32 as i32).to_string(), usage.clone());
             results.insert(lower_32.to_string(), usage.clone());
-            results.insert(signed_32.to_string(), usage);
+            results.insert((lower_32 as i32).to_string(), usage);
         }
     }
 }
@@ -326,8 +326,8 @@ pub fn parse_localconfig_str(content: &str) -> HashMap<String, SteamAppUsage> {
     let mut current_appid: Option<String> = None;
     let mut current_usage = SteamAppUsage::default();
     let mut in_apps_section = false;
-    let mut brace_depth = 0;
-    let mut apps_depth = 0;
+    let mut brace_depth: usize = 0;
+    let mut apps_depth: usize = 0;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -346,7 +346,7 @@ pub fn parse_localconfig_str(content: &str) -> HashMap<String, SteamAppUsage> {
                 current_usage = SteamAppUsage::default();
             }
 
-            brace_depth -= 1;
+            brace_depth = brace_depth.saturating_sub(1);
             if in_apps_section && brace_depth < apps_depth {
                 in_apps_section = false;
             }
@@ -370,7 +370,7 @@ pub fn parse_localconfig_str(content: &str) -> HashMap<String, SteamAppUsage> {
         if tokens.len() == 1 && brace_depth == apps_depth {
             // New app entry: e.g. "760" or "2485153835" or "-1809813461"
             let id = tokens[0].trim();
-            if id.parse::<i64>().is_ok() {
+            if id.parse::<i64>().is_ok() || id.parse::<u64>().is_ok() {
                 if let Some(prev_id) = current_appid.take() {
                     if current_usage.playtime_minutes > 0 || current_usage.last_played.is_some() {
                         insert_dual_keyed(&mut results, prev_id, current_usage);
@@ -428,7 +428,19 @@ pub fn lookup_playtime(playtime_map: &HashMap<String, SteamAppUsage>, appid: &st
             return Some(usage.clone());
         }
 
-        // Lower 32 bits (for 64-bit Steam shortcut IDs)
+        // For 64-bit Steam shortcut IDs, check upper 32 bits first (where AppID lives), then lower 32 bits
+        if unsigned_id > u32::MAX as u64 {
+            let upper_32 = (unsigned_id >> 32) as u32;
+            let upper_str = upper_32.to_string();
+            if let Some(usage) = playtime_map.get(&upper_str) {
+                return Some(usage.clone());
+            }
+            let upper_signed = (upper_32 as i32).to_string();
+            if let Some(usage) = playtime_map.get(&upper_signed) {
+                return Some(usage.clone());
+            }
+        }
+
         let lower_32 = (unsigned_id & 0xFFFF_FFFF) as u32;
         let lower_str = lower_32.to_string();
         if let Some(usage) = playtime_map.get(&lower_str) {
@@ -550,16 +562,42 @@ pub fn parse_non_steam_shortcuts(steam_dir: &Path, steam_id: &str) -> Vec<NonSte
                         }
                     }
                     0x00 => {
-                        // Sub-object (skip until 0x08)
-                        let mut depth = 1;
+                        // Sub-object (skip inner key-value pairs until closing 0x08)
+                        let mut depth = 1usize;
                         while cursor < len && depth > 0 {
-                            if bytes[cursor] == 0x00 {
-                                depth += 1;
-                            } else if bytes[cursor] == 0x08 {
-                                depth -= 1;
-                            }
+                            let tag = bytes[cursor];
                             cursor += 1;
+                            match tag {
+                                0x00 => {
+                                    let _ = read_cstring(&mut cursor);
+                                    depth += 1;
+                                }
+                                0x01 => {
+                                    let _ = read_cstring(&mut cursor);
+                                    let _ = read_cstring(&mut cursor);
+                                }
+                                0x02 | 0x03 | 0x06 => {
+                                    let _ = read_cstring(&mut cursor);
+                                    cursor = (cursor + 4).min(len);
+                                }
+                                0x07 => {
+                                    let _ = read_cstring(&mut cursor);
+                                    cursor = (cursor + 8).min(len);
+                                }
+                                0x08 => {
+                                    depth -= 1;
+                                }
+                                _ => break,
+                            }
                         }
+                    }
+                    0x03 | 0x06 => {
+                        // 32-bit float or 4-byte scalar
+                        cursor = (cursor + 4).min(len);
+                    }
+                    0x07 => {
+                        // 64-bit integer
+                        cursor = (cursor + 8).min(len);
                     }
                     _ => {
                         // Skip unknown
@@ -719,10 +757,61 @@ mod tests {
         assert!(found.is_some());
         assert_eq!(found.unwrap().playtime_minutes, 350);
 
-        // Test querying with 64-bit Steam ID containing 2485153835 in lower 32 bits
-        let full_64: u64 = (0x80000000u64 << 32) | 2485153835u64;
-        let found_64 = lookup_playtime(&map, &full_64.to_string());
-        assert!(found_64.is_some());
-        assert_eq!(found_64.unwrap().playtime_minutes, 350);
+        // Test querying with 64-bit Steam ID containing 2485153835 in lower 32 bits (fallback)
+        let full_64_lower: u64 = (0x80000000u64 << 32) | 2485153835u64;
+        let found_lower = lookup_playtime(&map, &full_64_lower.to_string());
+        assert!(found_lower.is_some());
+        assert_eq!(found_lower.unwrap().playtime_minutes, 350);
+
+        // Test querying with true Steam 64-bit shortcut ID where AppID is in UPPER 32 bits
+        // e.g. (2485153835 << 32) | 0x02000000
+        let full_64_upper: u64 = (2485153835u64 << 32) | 0x02000000u64;
+        let found_upper = lookup_playtime(&map, &full_64_upper.to_string());
+        assert!(found_upper.is_some());
+        assert_eq!(found_upper.unwrap().playtime_minutes, 350);
+    }
+
+    #[test]
+    fn test_unbalanced_braces_localconfig_no_panic() {
+        // Stray closing braces must be handled safely via saturating_sub without underflow panic
+        let broken_vdf = r#"
+"UserLocalConfigStore"
+{
+}
+}
+}
+"#;
+        let results = parse_localconfig_str(broken_vdf);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_large_appid_above_i64_max() {
+        // AppIDs with bit 63 set (>= 2^63) must not be dropped by i64 parsing
+        let large_id = "18446744073709551615"; // u64::MAX
+        let vdf = format!(r#"
+"UserLocalConfigStore"
+{{
+	"Software"
+	{{
+		"Valve"
+		{{
+			"Steam"
+			{{
+				"apps"
+				{{
+					"{}"
+					{{
+						"Playtime" "42"
+					}}
+				}}
+			}}
+		}}
+	}}
+}}
+"#, large_id);
+        let results = parse_localconfig_str(&vdf);
+        assert!(results.contains_key(large_id));
+        assert_eq!(results.get(large_id).unwrap().playtime_minutes, 42);
     }
 }

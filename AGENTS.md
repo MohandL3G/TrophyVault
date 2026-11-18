@@ -4,7 +4,7 @@ This repository contains a desktop application written in **Rust** that generate
 
 ## Architecture & Technology Stack
 
-- **GUI Framework**: `eframe` / `egui` (0.29) with GPU rendering via WGPU.
+- **GUI Framework**: `eframe` / `egui` (0.29) with Glow OpenGL renderer (avoiding DirectX 12 game overlay hooks).
 - **Graphic Rendering**: `resvg` (0.44), `usvg` (0.44), and `tiny-skia` (0.11). The generator constructs vector SVG documents with HUD chamfered geometry, gradients, and custom icons, then rasterizes to high-resolution PNG (1200 × 850).
 - **Data Integration**:
   - Automatically locates `%APPDATA%\Achievements\` on Windows (and `~/.config/Achievements/` on Linux).

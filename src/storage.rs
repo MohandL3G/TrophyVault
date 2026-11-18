@@ -1,5 +1,5 @@
 //! Persistent JSON database and synchronization engine.
-//! Stored in `%APPDATA%\AchievementsPassport\library_database.json`.
+//! Stored in `%APPDATA%\TrophyVault\library_database.json`.
 
 use crate::bloodborne::parse_bloodborne_user_dir;
 use crate::data::{AchievementsData, GameItem, LibraryStats, Preferences};
@@ -125,7 +125,13 @@ pub fn get_app_data_dir() -> PathBuf {
         return config_dir.join("TrophyVault");
     }
 
-    PathBuf::from("TrophyVault")
+    if let Some(data_dir) = dirs::data_dir() {
+        return data_dir.join("TrophyVault");
+    }
+
+    dirs::home_dir()
+        .map(|h| h.join(".trophyvault"))
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Legacy directory used by earlier versions (`%APPDATA%\AchievementsPassport`).
@@ -138,7 +144,13 @@ pub fn get_legacy_app_data_dir() -> PathBuf {
         return config_dir.join("AchievementsPassport");
     }
 
-    PathBuf::from("AchievementsPassport")
+    if let Some(data_dir) = dirs::data_dir() {
+        return data_dir.join("AchievementsPassport");
+    }
+
+    dirs::home_dir()
+        .map(|h| h.join(".achievementspassport"))
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Resolves the absolute path to `library_database.json` for a specific Steam user account.
@@ -148,7 +160,8 @@ pub fn get_database_path_for_user(steam_id: Option<&str>) -> PathBuf {
     let app_dir = get_app_data_dir();
     if let Some(id) = steam_id {
         let trimmed = id.trim();
-        if !trimmed.is_empty() {
+        // Restrict to alphanumeric, underscore, or hyphen to prevent directory traversal
+        if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
             return app_dir.join(trimmed).join("library_database.json");
         }
     }
@@ -205,12 +218,41 @@ pub fn load_or_create_database_for_user(steam_id: Option<&str>) -> LibraryDataba
 
     // 1. If user-specific database already exists, load it
     if db_path.exists() {
-        if let Ok(content) = fs::read_to_string(&db_path) {
-            if let Ok(mut db) = serde_json::from_str::<LibraryDatabase>(&content) {
-                if sanitize_database(&mut db) {
-                    let _ = save_database_for_user(&db, steam_id);
+        match fs::read_to_string(&db_path) {
+            Ok(content) => match serde_json::from_str::<LibraryDatabase>(&content) {
+                Ok(mut db) => {
+                    if sanitize_database(&mut db) {
+                        let _ = save_database_for_user(&db, steam_id);
+                    }
+                    return db;
                 }
-                return db;
+                Err(err) => {
+                    eprintln!(
+                        "Corrupted database detected at '{}': {}. Quarantining file.",
+                        db_path.display(),
+                        err
+                    );
+                    // Quarantine corrupted file to prevent permanent data loss
+                    let corrupted_path = db_path.with_extension("json.corrupted");
+                    let _ = fs::copy(&db_path, &corrupted_path);
+
+                    // Attempt restore from backup
+                    let bak_path = db_path.with_extension("json.bak");
+                    if bak_path.exists() {
+                        if let Ok(bak_content) = fs::read_to_string(&bak_path) {
+                            if let Ok(mut db) = serde_json::from_str::<LibraryDatabase>(&bak_content) {
+                                eprintln!("Successfully recovered database from '{}'", bak_path.display());
+                                if sanitize_database(&mut db) {
+                                    let _ = save_database_for_user(&db, steam_id);
+                                }
+                                return db;
+                            }
+                        }
+                    }
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to read database at '{}': {}", db_path.display(), e);
             }
         }
     }
@@ -240,6 +282,14 @@ pub fn load_or_create_database_for_user(steam_id: Option<&str>) -> LibraryDataba
     }
 
     // 3. Initialize fresh isolated database for this user
+    let default_user_dir = if cfg!(windows) {
+        r"C:\Games\Decomps\Bloodborne\user".to_string()
+    } else {
+        dirs::home_dir()
+            .map(|h| h.join("Games").join("Bloodborne").join("user").to_string_lossy().to_string())
+            .unwrap_or_else(|| "Games/Bloodborne/user".to_string())
+    };
+
     let mut db = LibraryDatabase {
         version: 1,
         last_updated: current_timestamp(),
@@ -253,7 +303,7 @@ pub fn load_or_create_database_for_user(steam_id: Option<&str>) -> LibraryDataba
                 name: "Bloodborne (PC Recomp)".to_string(),
                 platform: "PC Port / Recomp".to_string(),
                 parser_type: "bbport".to_string(),
-                user_dir: r"C:\Games\Decomps\Bloodborne\user".to_string(),
+                user_dir: default_user_dir,
                 non_steam_appid: Some("2485153835".to_string()),
                 enabled: true,
             },
@@ -347,7 +397,7 @@ fn seed_from_legacy_achievements(db: &mut LibraryDatabase) {
     }
 }
 
-/// Save the database for a specific Steam user account.
+/// Save the database for a specific Steam user account using atomic replace.
 pub fn save_database_for_user(db: &LibraryDatabase, steam_id: Option<&str>) -> Result<(), String> {
     let target_id = steam_id.or(db.preferences.steam_id.as_deref());
     let db_path = get_database_path_for_user(target_id);
@@ -359,8 +409,28 @@ pub fn save_database_for_user(db: &LibraryDatabase, steam_id: Option<&str>) -> R
     let json_str = serde_json::to_string_pretty(db)
         .map_err(|e| format!("Failed to serialize database: {}", e))?;
 
-    fs::write(&db_path, json_str)
-        .map_err(|e| format!("Failed to write database file '{}': {}", db_path.display(), e))?;
+    let tmp_path = db_path.with_extension("json.tmp");
+    let bak_path = db_path.with_extension("json.bak");
+
+    // 1. Write to temporary file with explicit flush and sync_all
+    {
+        use std::io::Write;
+        let mut file = fs::File::create(&tmp_path)
+            .map_err(|e| format!("Failed to create temporary file '{}': {}", tmp_path.display(), e))?;
+        file.write_all(json_str.as_bytes())
+            .map_err(|e| format!("Failed to write temporary file '{}': {}", tmp_path.display(), e))?;
+        file.sync_all()
+            .map_err(|e| format!("Failed to sync temporary file '{}': {}", tmp_path.display(), e))?;
+    }
+
+    // 2. Backup existing valid database file if present
+    if db_path.exists() {
+        let _ = fs::copy(&db_path, &bak_path);
+    }
+
+    // 3. Atomically replace database file
+    fs::rename(&tmp_path, &db_path)
+        .map_err(|e| format!("Failed to rename '{}' to '{}': {}", tmp_path.display(), db_path.display(), e))?;
 
     Ok(())
 }
@@ -734,5 +804,40 @@ pub fn database_to_achievements_data(db: &LibraryDatabase) -> AchievementsData {
         username,
         stats,
         games,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_path_sanitization_prevents_traversal() {
+        let p_traversal = get_database_path_for_user(Some("../../../etc/passwd"));
+        assert!(!p_traversal.to_string_lossy().contains("etc/passwd"));
+        assert!(p_traversal.ends_with("library_database.json"));
+
+        let p_valid = get_database_path_for_user(Some("462943940"));
+        assert!(p_valid.to_string_lossy().contains("462943940"));
+
+        let p_invalid_chars = get_database_path_for_user(Some("user;rm -rf /"));
+        assert!(!p_invalid_chars.to_string_lossy().contains("rm -rf"));
+    }
+
+    #[test]
+    fn test_database_serialization_and_defaults() {
+        let db = LibraryDatabase {
+            version: 1,
+            last_updated: 1700000000,
+            preferences: DatabasePreferences::default(),
+            manual_games: Vec::new(),
+            games: HashMap::new(),
+        };
+
+        let json = serde_json::to_string(&db).expect("Serialization must succeed");
+        let parsed: LibraryDatabase = serde_json::from_str(&json).expect("Deserialization must succeed");
+        assert_eq!(parsed.version, 1);
+        assert_eq!(parsed.last_updated, 1700000000);
+        assert!(parsed.games.is_empty());
     }
 }

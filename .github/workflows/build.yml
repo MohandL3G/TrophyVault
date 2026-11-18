@@ -37,3 +37,35 @@ jobs:
           name: TrophyVault-Windows
           path: target/release/TrophyVault.exe
           if-no-files-found: error
+
+  build-linux:
+    name: Build Linux Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxinerama-dev
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Unit Tests
+        run: cargo test --verbose
+
+      - name: Build Release Binary
+        run: cargo build --release --verbose
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrophyVault-Linux
+          path: target/release/TrophyVault
+          if-no-files-found: error

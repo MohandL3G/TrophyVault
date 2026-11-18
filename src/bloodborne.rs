@@ -70,9 +70,14 @@ pub fn parse_bloodborne_user_dir(user_dir: &Path) -> Result<BloodborneScanResult
         if path.exists() {
             if let Ok(content) = fs::read_to_string(path) {
                 for line in content.lines() {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
                     if parts.len() >= 2 {
-                        if let (Ok(id), Ok(ts)) = (parts[0].parse::<u32>(), parts[1].parse::<u64>()) {
+                        if let Ok(id) = parts[0].parse::<u32>() {
+                            let ts = parts[1].parse::<u64>().unwrap_or(0);
                             unlocked_map.insert(id, ts);
                         }
                     } else if parts.len() == 1 {
@@ -109,6 +114,9 @@ pub fn parse_bloodborne_user_dir(user_dir: &Path) -> Result<BloodborneScanResult
                 if let Ok(parsed) = serde_json::from_str::<TrophyMetadataFile>(&content) {
                     schema_entries = parsed.entries;
                     break;
+                } else if let Ok(entries) = serde_json::from_str::<Vec<TrophyMetadataEntry>>(&content) {
+                    schema_entries = entries;
+                    break;
                 }
             }
         }
@@ -129,7 +137,7 @@ pub fn parse_bloodborne_user_dir(user_dir: &Path) -> Result<BloodborneScanResult
 
         if is_unlocked {
             unlocked_count += 1;
-            if entry.id == 0 || entry.grade.eq_ignore_ascii_case("P") {
+            if entry.grade.eq_ignore_ascii_case("P") || entry.grade.eq_ignore_ascii_case("Platinum") {
                 platinum_unlocked = true;
             }
         }
@@ -207,5 +215,38 @@ fn default_bloodborne_schema() -> Vec<TrophyMetadataEntry> {
         TrophyMetadataEntry { id: 37, name: "Chalice of Hintertomb".into(), description: "Acquire the Hintertomb Chalice.".into(), grade: "B".into(), score: Some(15), hidden: Some(false) },
         TrophyMetadataEntry { id: 38, name: "Chalice of Lower Hintertomb".into(), description: "Acquire the Lower Hintertomb Chalice.".into(), grade: "B".into(), score: Some(15), hidden: Some(false) },
         TrophyMetadataEntry { id: 39, name: "Chalice of Lower Loran".into(), description: "Acquire the Lower Loran Chalice.".into(), grade: "B".into(), score: Some(15), hidden: Some(false) },
+        // The Old Hunters DLC Trophies
+        TrophyMetadataEntry { id: 40, name: "Old Hunter's Essence".into(), description: "Acquire all old hunter weapons.".into(), grade: "G".into(), score: Some(60), hidden: Some(false) },
+        TrophyMetadataEntry { id: 41, name: "Orphan of Kos".into(), description: "Defeat Great One: Orphan of Kos.".into(), grade: "S".into(), score: Some(30), hidden: Some(true) },
+        TrophyMetadataEntry { id: 42, name: "Ludwig, the Holy Blade".into(), description: "Defeat the beast that once was Ludwig, the Holy Blade.".into(), grade: "S".into(), score: Some(30), hidden: Some(true) },
+        TrophyMetadataEntry { id: 43, name: "Lady Maria of the Astral Clocktower".into(), description: "Defeat Lady Maria of the Astral Clocktower.".into(), grade: "S".into(), score: Some(30), hidden: Some(true) },
+        TrophyMetadataEntry { id: 44, name: "Living Failures".into(), description: "Defeat failures of an empyrean origin.".into(), grade: "S".into(), score: Some(30), hidden: Some(true) },
+        TrophyMetadataEntry { id: 45, name: "Laurence, the First Vicar".into(), description: "Defeat the beast that once was Laurence, the First Vicar.".into(), grade: "S".into(), score: Some(30), hidden: Some(true) },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_bloodborne_schema_count() {
+        let schema = default_bloodborne_schema();
+        assert_eq!(schema.len(), 46);
+        assert_eq!(schema[0].name, "Bloodborne");
+        assert_eq!(schema[0].grade, "P");
+    }
+
+    #[test]
+    fn test_metadata_json_array_or_object_parse() {
+        let obj_json = r#"{"entries":[{"id":0,"name":"Test","description":"Desc","grade":"P"}]}"#;
+        let parsed_obj = serde_json::from_str::<TrophyMetadataFile>(obj_json);
+        assert!(parsed_obj.is_ok());
+        assert_eq!(parsed_obj.unwrap().entries.len(), 1);
+
+        let arr_json = r#"[{"id":0,"name":"Test","description":"Desc","grade":"P"}]"#;
+        let parsed_arr = serde_json::from_str::<Vec<TrophyMetadataEntry>>(arr_json);
+        assert!(parsed_arr.is_ok());
+        assert_eq!(parsed_arr.unwrap().len(), 1);
+    }
 }

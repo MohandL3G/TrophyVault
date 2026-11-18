@@ -1,12 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
-mod bloodborne;
-mod data;
-mod generator;
-mod icons;
-mod steam;
-mod storage;
 
 use app::PassportApp;
 use std::sync::Arc;

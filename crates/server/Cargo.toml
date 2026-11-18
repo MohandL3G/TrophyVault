@@ -1,0 +1,10 @@
+[package]
+name = "trophyvault-server"
+version = "0.0.12"
+edition = "2021"
+authors = ["MohandL3G"]
+description = "TrophyVault: Self-hosted web server and sync backend"
+license = "MIT"
+
+[dependencies]
+trophyvault-core = { path = "../core" }

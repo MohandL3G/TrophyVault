@@ -1,15 +1,15 @@
 //! GUI Application built using eframe / egui.
 
-use crate::data::{AchievementsData, GameItem};
-use crate::generator::{
+use trophyvault_core::data::{AchievementsData, GameItem};
+use trophyvault_core::generator::{
     generate_passport_svg, render_svg_to_pixmap, PassportOptions, PassportTheme,
 };
-use crate::storage::{
+use trophyvault_core::storage::{
     database_to_achievements_data, get_database_path_for_user,
     load_or_create_database_for_user, save_database,
     sync_library, LibraryDatabase, ManualGameSetting,
 };
-use crate::steam::{
+use trophyvault_core::steam::{
     detect_steam_users, find_active_steam_id, find_steam_dir, parse_non_steam_shortcuts,
     NonSteamShortcut, SteamUserAccount,
 };
@@ -600,7 +600,7 @@ impl eframe::App for PassportApp {
                         if ui.button("Confirm").clicked() {
                             let trimmed = self.custom_steam_id_input.trim();
                             if let Ok(s64) = trimmed.parse::<u64>() {
-                                if let Some(s32) = crate::steam::steam64_to_steam32(s64) {
+                                if let Some(s32) = trophyvault_core::steam::steam64_to_steam32(s64) {
                                     custom_target = Some(s32.to_string());
                                 } else {
                                     custom_target = Some(s64.to_string());

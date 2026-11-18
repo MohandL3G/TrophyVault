@@ -13,7 +13,7 @@ COPY crates/core ./crates/core
 COPY crates/server ./crates/server
 
 # Exclude desktop crate from workspace members so server builds cleanly without GUI dependencies
-RUN sed -i '/crates\/desktop/d' Cargo.toml
+RUN sed -i '/crates\/desktop/d' Cargo.toml && sed -i '/default-members/d' Cargo.toml
 
 # Compile release binary for trophyvault-server
 RUN cargo build --release -p trophyvault-server

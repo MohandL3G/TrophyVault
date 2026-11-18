@@ -1,6 +1,6 @@
 services:
   trophyvault-web:
-    build: .
+    image: ghcr.io/mohandl3g/trophyvault:latest
     container_name: trophyvault-web
     restart: unless-stopped
     ports:

@@ -643,7 +643,8 @@ mod tests {
         };
         let svg = generate_passport_svg(&data, &options);
         assert!(svg.contains("&amp;"));
-        assert!(svg.contains("&lt;Arcade&gt;"));
+        assert!(svg.contains("&lt;ARCADE&gt;"));
+        assert!(svg.contains("&lt;Pro&gt;"));
         assert!(!svg.contains("Player & Co <Pro>")); // Raw unescaped string must not appear
     }
 }

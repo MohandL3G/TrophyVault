@@ -115,7 +115,7 @@ async fn test_health_endpoint() {
     let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
     let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
     assert_eq!(body["status"], "ok");
-    assert_eq!(body["version"], "0.0.12");
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
 }
 
 #[tokio::test]

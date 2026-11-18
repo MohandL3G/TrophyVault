@@ -1,0 +1,16 @@
+services:
+  trophyvault-web:
+    build: .
+    container_name: trophyvault-web
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    environment:
+      - PORT=5050
+      - API_KEY=trophyvault-secret-key-change-me
+      - DATABASE_PATH=/data/library_database.json
+    volumes:
+      - trophyvault-data:/data
+
+volumes:
+  trophyvault-data:

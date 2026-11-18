@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use crate::storage::SyncSettings;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardSummary {
@@ -33,6 +34,8 @@ pub struct Preferences {
     pub steam_official_steam_id: Option<String>,
     #[serde(rename = "watchedFolders", default)]
     pub watched_folders: Vec<String>,
+    #[serde(default)]
+    pub sync_settings: Option<SyncSettings>,
 }
 
 #[derive(Debug, Clone)]

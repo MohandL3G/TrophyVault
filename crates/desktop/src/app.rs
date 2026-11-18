@@ -22,6 +22,7 @@ enum AppTab {
     Canvas,
     CustomGames,
     DatabaseManager,
+    Settings,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -84,6 +85,11 @@ pub struct PassportApp {
     status_notification: Option<(String, bool)>, // (message, is_error)
     preview_texture: Option<egui::TextureHandle>,
     last_rendered_svg: Option<String>,
+
+    // Cloud Sync UI state
+    show_api_key_plaintext: bool,
+    cloud_sync_status_msg: Option<(String, bool)>,
+    has_synced_on_exit: bool,
 }
 
 impl PassportApp {
@@ -183,7 +189,15 @@ impl PassportApp {
             status_notification: None,
             preview_texture: None,
             last_rendered_svg: None,
+
+            show_api_key_plaintext: false,
+            cloud_sync_status_msg: None,
+            has_synced_on_exit: false,
         };
+
+        if app.db.preferences.sync_settings.is_none() {
+            app.db.preferences.sync_settings = Some(trophyvault_core::storage::SyncSettings::default());
+        }
 
         app.rebuild_cached_db_keys();
         app.refresh_data_and_preview(&cc.egui_ctx);
@@ -549,8 +563,20 @@ impl eframe::App for PassportApp {
                 {
                     self.active_tab = AppTab::DatabaseManager;
                 }
+                if ui
+                    .selectable_label(
+                        self.active_tab == AppTab::Settings,
+                        "☁ Cloud Sync",
+                    )
+                    .clicked()
+                {
+                    self.active_tab = AppTab::Settings;
+                }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("☁ Sync Web").clicked() {
+                        self.trigger_cloud_sync();
+                    }
                     if ui.button("🔄 Sync Library").clicked() {
                         self.run_sync(ctx);
                     }
@@ -630,7 +656,18 @@ impl eframe::App for PassportApp {
             AppTab::Canvas => self.show_canvas_tab(ctx),
             AppTab::CustomGames => self.show_custom_games_tab(ctx),
             AppTab::DatabaseManager => self.show_database_tab(ctx),
+            AppTab::Settings => self.show_settings_tab(ctx),
         }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.perform_exit_sync();
+    }
+}
+
+impl Drop for PassportApp {
+    fn drop(&mut self) {
+        self.perform_exit_sync();
     }
 }
 
@@ -855,6 +892,25 @@ impl PassportApp {
                                 .clicked()
                             {
                                 self.save_svg();
+                            }
+                        });
+
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_sized([160.0, 32.0], egui::Button::new("☁ Sync to Web Now"))
+                                .clicked()
+                            {
+                                self.trigger_cloud_sync();
+                            }
+                            if let Some(s) = &self.db.preferences.sync_settings {
+                                if let Some(ts) = s.last_sync_timestamp {
+                                    ui.label(
+                                        egui::RichText::new(format!("Last: {}", ts))
+                                            .size(11.0)
+                                            .color(egui::Color32::from_rgb(100, 200, 150)),
+                                    );
+                                }
                             }
                         });
                     });
@@ -1353,5 +1409,240 @@ impl PassportApp {
                 self.refresh_data_and_preview(ctx);
             }
         });
+    }
+
+    pub fn trigger_cloud_sync(&mut self) {
+        let settings = match &self.db.preferences.sync_settings {
+            Some(s) => s.clone(),
+            None => {
+                let msg = "Cloud sync settings not configured.".to_string();
+                self.status_notification = Some((msg.clone(), true));
+                self.cloud_sync_status_msg = Some((msg, true));
+                return;
+            }
+        };
+
+        if !settings.is_configured() {
+            let msg = "Cloud sync failed: Server URL or API key is not configured.".to_string();
+            self.status_notification = Some((msg.clone(), true));
+            self.cloud_sync_status_msg = Some((msg, true));
+            return;
+        }
+
+        match trophyvault_core::storage::sync_to_remote(&self.db, &settings) {
+            Ok(resp_msg) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                if let Some(s) = &mut self.db.preferences.sync_settings {
+                    s.last_sync_timestamp = Some(now);
+                    s.last_sync_status = Some("Success".to_string());
+                }
+                let _ = save_database(&self.db);
+                let ok_msg = format!("✓ Cloud sync successful: {}", resp_msg);
+                self.status_notification = Some((ok_msg.clone(), false));
+                self.cloud_sync_status_msg = Some((ok_msg, false));
+            }
+            Err(err_msg) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                if let Some(s) = &mut self.db.preferences.sync_settings {
+                    s.last_sync_timestamp = Some(now);
+                    s.last_sync_status = Some(format!("Failed: {}", err_msg));
+                }
+                let _ = save_database(&self.db);
+                let fail_msg = format!("✗ Cloud sync failed: {}", err_msg);
+                self.status_notification = Some((fail_msg.clone(), true));
+                self.cloud_sync_status_msg = Some((fail_msg, true));
+            }
+        }
+    }
+
+    fn perform_exit_sync(&mut self) {
+        if self.has_synced_on_exit {
+            return;
+        }
+        self.has_synced_on_exit = true;
+
+        if let Some(settings) = &self.db.preferences.sync_settings {
+            if settings.auto_sync_on_exit && settings.is_configured() {
+                eprintln!(
+                    "[TrophyVault] Performing auto-sync on exit to {}...",
+                    settings.server_url
+                );
+                match trophyvault_core::storage::sync_to_remote(&self.db, settings) {
+                    Ok(msg) => eprintln!("[TrophyVault] Auto-sync on exit succeeded: {}", msg),
+                    Err(err) => eprintln!("[TrophyVault] Auto-sync on exit failed: {}", err),
+                }
+            }
+        }
+    }
+
+    fn show_settings_tab(&mut self, ctx: &egui::Context) {
+        let mut pref_changed = false;
+        let mut trigger_sync = false;
+        let mut toggle_plaintext = false;
+        let show_plaintext = self.show_api_key_plaintext;
+        let cloud_status = self.cloud_sync_status_msg.clone();
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(8.0);
+            ui.heading(
+                egui::RichText::new("☁ Cloud Sync & Web Integration")
+                    .color(egui::Color32::from_rgb(0, 240, 255))
+                    .strong(),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Configure remote synchronization with your TrophyVault Web Server to automatically export your library and dynamic SVG badge/passport.",
+                )
+                .color(egui::Color32::from_rgb(160, 180, 200)),
+            );
+            ui.add_space(14.0);
+
+            let sync_settings = self
+                .db
+                .preferences
+                .sync_settings
+                .get_or_insert_with(trophyvault_core::storage::SyncSettings::default);
+
+            ui.group(|ui| {
+                ui.set_width(ui.available_width().min(680.0));
+
+                ui.label(
+                    egui::RichText::new("🌐 Remote Server Settings")
+                        .strong()
+                        .color(egui::Color32::from_rgb(0, 240, 255)),
+                );
+                ui.add_space(6.0);
+
+                if ui.checkbox(&mut sync_settings.enabled, "Enable Remote Cloud Sync").changed() {
+                    pref_changed = true;
+                }
+                ui.add_space(8.0);
+
+                ui.label("Server URL (e.g. https://vault.mohandl3g.ly):");
+                let url_res = ui.add(
+                    egui::TextEdit::singleline(&mut sync_settings.server_url)
+                        .hint_text("https://vault.mohandl3g.ly")
+                        .desired_width(f32::INFINITY),
+                );
+                if url_res.changed() {
+                    pref_changed = true;
+                }
+
+                ui.add_space(8.0);
+
+                ui.label("API Bearer Token / Key:");
+                ui.horizontal(|ui| {
+                    let key_res = ui.add(
+                        egui::TextEdit::singleline(&mut sync_settings.api_key)
+                            .password(!show_plaintext)
+                            .hint_text("Enter server API key")
+                            .desired_width(420.0),
+                    );
+                    if key_res.changed() {
+                        pref_changed = true;
+                    }
+
+                    let btn_label = if show_plaintext { "🙈 Hide" } else { "👁 Show" };
+                    if ui.button(btn_label).clicked() {
+                        toggle_plaintext = true;
+                    }
+                });
+
+                ui.add_space(8.0);
+
+                if ui
+                    .checkbox(
+                        &mut sync_settings.auto_sync_on_exit,
+                        "Auto-sync on app exit",
+                    )
+                    .changed()
+                {
+                    pref_changed = true;
+                }
+
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(10.0);
+
+                ui.horizontal(|ui| {
+                    let sync_btn = ui.add_sized(
+                        [170.0, 36.0],
+                        egui::Button::new(
+                            egui::RichText::new("☁ Sync to Web Now")
+                                .strong()
+                                .color(egui::Color32::from_rgb(0, 240, 255)),
+                        ),
+                    );
+
+                    if sync_btn.clicked() {
+                        trigger_sync = true;
+                    }
+                });
+
+                ui.add_space(10.0);
+
+                if let Some(ts) = sync_settings.last_sync_timestamp {
+                    let status_str = sync_settings
+                        .last_sync_status
+                        .as_deref()
+                        .unwrap_or("Unknown");
+
+                    let status_color = if status_str.starts_with("Success") {
+                        egui::Color32::from_rgb(0, 255, 136)
+                    } else {
+                        egui::Color32::from_rgb(255, 100, 100)
+                    };
+
+                    ui.horizontal(|ui| {
+                        ui.label("Last Sync Status:");
+                        ui.label(egui::RichText::new(status_str).color(status_color).strong());
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Last Sync Timestamp (Unix):");
+                        ui.label(
+                            egui::RichText::new(format!("{}", ts))
+                                .monospace()
+                                .color(egui::Color32::from_rgb(180, 200, 220)),
+                        );
+                    });
+                } else {
+                    ui.label(
+                        egui::RichText::new("Never synced yet.")
+                            .italics()
+                            .color(egui::Color32::from_rgb(140, 150, 160)),
+                    );
+                }
+
+                if let Some((msg, is_err)) = &cloud_status {
+                    ui.add_space(8.0);
+                    let color = if *is_err {
+                        egui::Color32::from_rgb(255, 100, 100)
+                    } else {
+                        egui::Color32::from_rgb(100, 255, 180)
+                    };
+                    ui.label(egui::RichText::new(msg).color(color).strong());
+                }
+            });
+        });
+
+        if toggle_plaintext {
+            self.show_api_key_plaintext = !self.show_api_key_plaintext;
+        }
+
+        if pref_changed {
+            let _ = save_database(&self.db);
+        }
+
+        if trigger_sync {
+            let _ = save_database(&self.db);
+            self.trigger_cloud_sync();
+        }
     }
 }

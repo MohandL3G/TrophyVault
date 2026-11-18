@@ -2,11 +2,11 @@
 
 use crate::data::{AchievementsData, GameItem};
 use crate::generator::{
-    generate_passport_svg, render_svg_to_pixmap, render_svg_to_png, PassportOptions, PassportTheme,
+    generate_passport_svg, render_svg_to_pixmap, PassportOptions, PassportTheme,
 };
 use crate::storage::{
-    database_to_achievements_data, get_database_path, get_database_path_for_user,
-    load_or_create_database, load_or_create_database_for_user, save_database,
+    database_to_achievements_data, get_database_path_for_user,
+    load_or_create_database_for_user, save_database,
     sync_library, LibraryDatabase, ManualGameSetting,
 };
 use crate::steam::{

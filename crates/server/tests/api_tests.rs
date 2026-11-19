@@ -429,7 +429,11 @@ async fn test_static_index_serving() {
     let config = ServerConfig {
         port: 5050,
         api_key: "key".to_string(),
+        admin_password: None,
+        username: None,
+        slogan: None,
         db_path: temp_dir.path().join("db.json"),
+        avatar_path: temp_dir.path().join("avatar.png"),
         static_dir: static_dir.clone(),
     };
     let state = Arc::new(RwLock::new(AppState::new(&config)));

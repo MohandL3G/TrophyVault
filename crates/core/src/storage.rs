@@ -24,6 +24,13 @@ pub struct LibraryDatabase {
     pub games: HashMap<String, SavedGameEntry>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SyncMode {
+    #[default]
+    Updates,
+    Full,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncSettings {
     #[serde(default)]
@@ -38,6 +45,8 @@ pub struct SyncSettings {
     pub last_sync_timestamp: Option<u64>,
     #[serde(default)]
     pub last_sync_status: Option<String>,
+    #[serde(default)]
+    pub sync_mode: SyncMode,
 }
 
 impl Default for SyncSettings {
@@ -49,6 +58,7 @@ impl Default for SyncSettings {
             auto_sync_on_exit: false,
             last_sync_timestamp: None,
             last_sync_status: None,
+            sync_mode: SyncMode::default(),
         }
     }
 }
@@ -58,17 +68,22 @@ impl SyncSettings {
         !self.server_url.trim().is_empty() && !self.api_key.trim().is_empty()
     }
 
-    pub fn formatted_api_url(&self) -> Result<String, String> {
+    pub fn formatted_base_url(&self) -> Result<String, String> {
         let base_url = self.server_url.trim().trim_end_matches('/');
         if base_url.is_empty() {
             return Err("Server URL cannot be empty".to_string());
         }
         let url = if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
-            format!("https://{}/api/sync", base_url)
+            format!("https://{}", base_url)
         } else {
-            format!("{}/api/sync", base_url)
+            base_url.to_string()
         };
         Ok(url)
+    }
+
+    pub fn formatted_api_url(&self) -> Result<String, String> {
+        let base = self.formatted_base_url()?;
+        Ok(format!("{}/api/sync", base))
     }
 }
 
@@ -859,22 +874,65 @@ pub fn database_to_achievements_data(db: &LibraryDatabase) -> AchievementsData {
     }
 }
 
-/// Sends the local database to the remote TrophyVault server via POST `/api/sync`.
-///
-/// Sends `POST {server_url}/api/sync` with header `Authorization: Bearer {api_key}`
-/// and JSON body of `db`. Handles connection errors, non-200 responses, and returns success message.
-pub fn sync_to_remote(db: &LibraryDatabase, settings: &SyncSettings) -> Result<String, String> {
-    let url = settings.formatted_api_url()?;
-
+/// Sends the local database to the remote TrophyVault server via POST `/api/sync?mode={update|full}`.
+pub fn sync_to_remote_with_mode(
+    db: &LibraryDatabase,
+    settings: &SyncSettings,
+    mode: SyncMode,
+) -> Result<String, String> {
     if settings.api_key.trim().is_empty() {
         return Err("API key is not configured".to_string());
     }
+
+    let mode_param = match mode {
+        SyncMode::Updates => "update",
+        SyncMode::Full => "full",
+    };
+    let base_sync_url = settings.formatted_api_url()?;
+    let url = format!("{}?mode={}", base_sync_url, mode_param);
 
     let response = ureq::post(&url)
         .set("Authorization", &format!("Bearer {}", settings.api_key.trim()))
         .set("Content-Type", "application/json")
         .timeout(std::time::Duration::from_secs(15))
         .send_json(db);
+
+    match response {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.into_string().unwrap_or_default();
+            Ok(format!("HTTP {}: {}", status, body))
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let body = resp.into_string().unwrap_or_else(|_| "Unknown error".to_string());
+            Err(format!("Server returned HTTP {}: {}", code, body))
+        }
+        Err(ureq::Error::Transport(err)) => {
+            Err(format!("Connection error: {}", err))
+        }
+    }
+}
+
+/// Sends the local database to the remote TrophyVault server via POST `/api/sync`.
+/// Delegates to `sync_to_remote_with_mode(db, settings, settings.sync_mode)`.
+pub fn sync_to_remote(db: &LibraryDatabase, settings: &SyncSettings) -> Result<String, String> {
+    sync_to_remote_with_mode(db, settings, settings.sync_mode)
+}
+
+/// Purges the remote database on the TrophyVault server via POST `/api/purge`.
+pub fn purge_remote_database(settings: &SyncSettings) -> Result<String, String> {
+    if settings.api_key.trim().is_empty() {
+        return Err("API key is not configured".to_string());
+    }
+
+    let base_url = settings.formatted_base_url()?;
+    let url = format!("{}/api/purge", base_url);
+
+    let response = ureq::post(&url)
+        .set("Authorization", &format!("Bearer {}", settings.api_key.trim()))
+        .set("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send_string("{}");
 
     match response {
         Ok(resp) => {
@@ -959,17 +1017,20 @@ mod tests {
         assert!(!default_settings.auto_sync_on_exit);
         assert!(default_settings.last_sync_timestamp.is_none());
         assert!(default_settings.last_sync_status.is_none());
+        assert_eq!(default_settings.sync_mode, SyncMode::Updates);
         assert!(!default_settings.is_configured());
 
         let json = serde_json::to_string(&default_settings).expect("Must serialize");
         let parsed: SyncSettings = serde_json::from_str(&json).expect("Must deserialize");
         assert_eq!(parsed.enabled, default_settings.enabled);
         assert_eq!(parsed.server_url, default_settings.server_url);
+        assert_eq!(parsed.sync_mode, SyncMode::Updates);
 
         // Deserializing empty JSON object should yield defaults
         let from_empty: SyncSettings = serde_json::from_str("{}").expect("Must deserialize empty");
         assert!(!from_empty.enabled);
         assert!(from_empty.server_url.is_empty());
+        assert_eq!(from_empty.sync_mode, SyncMode::Updates);
     }
 
     #[test]
@@ -1020,6 +1081,7 @@ mod tests {
             auto_sync_on_exit: true,
             last_sync_timestamp: Some(1730000000),
             last_sync_status: Some("Success".to_string()),
+            sync_mode: SyncMode::Updates,
         });
 
         let json = serde_json::to_string(&prefs_with_sync).expect("Must serialize");
@@ -1114,5 +1176,122 @@ mod tests {
         let result = sync_to_remote(&db, &settings);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Connection error"));
+    }
+
+    #[test]
+    fn test_sync_to_remote_with_mode_mock_server() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("Must bind ephemeral port");
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            // Handle two connections: first for update, second for full
+            for _ in 0..2 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buffer = [0u8; 4096];
+                    let mut request = Vec::new();
+                    while let Ok(n) = stream.read(&mut buffer) {
+                        if n == 0 {
+                            break;
+                        }
+                        request.extend_from_slice(&buffer[..n]);
+                        if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+
+                    let req_str = String::from_utf8_lossy(&request);
+                    assert!(req_str.contains("POST /api/sync?mode="));
+                    assert!(req_str.contains("Authorization: Bearer test-secret"));
+
+                    let response = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                    let _ = stream.shutdown(std::net::Shutdown::Write);
+
+                    let mut drain = [0u8; 1024];
+                    while let Ok(n) = stream.read(&mut drain) {
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        let db = LibraryDatabase {
+            version: 1,
+            last_updated: 1700000000,
+            preferences: DatabasePreferences::default(),
+            manual_games: Vec::new(),
+            games: HashMap::new(),
+        };
+
+        let settings = SyncSettings {
+            enabled: true,
+            server_url: format!("http://127.0.0.1:{}", port),
+            api_key: "test-secret".to_string(),
+            ..Default::default()
+        };
+
+        let res_updates = sync_to_remote_with_mode(&db, &settings, SyncMode::Updates);
+        assert!(res_updates.is_ok(), "Updates mode failed: {:?}", res_updates);
+
+        let res_full = sync_to_remote_with_mode(&db, &settings, SyncMode::Full);
+        assert!(res_full.is_ok(), "Full mode failed: {:?}", res_full);
+    }
+
+    #[test]
+    fn test_purge_remote_database_mock_server() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("Must bind ephemeral port");
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0u8; 4096];
+                let mut request = Vec::new();
+                while let Ok(n) = stream.read(&mut buffer) {
+                    if n == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..n]);
+                    if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+
+                let req_str = String::from_utf8_lossy(&request);
+                assert!(req_str.contains("POST /api/purge"));
+                assert!(req_str.contains("Authorization: Bearer purge-secret"));
+
+                let response = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"purged\":true}";
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+
+                let mut drain = [0u8; 1024];
+                while let Ok(n) = stream.read(&mut drain) {
+                    if n == 0 {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let settings = SyncSettings {
+            enabled: true,
+            server_url: format!("http://127.0.0.1:{}", port),
+            api_key: "purge-secret".to_string(),
+            ..Default::default()
+        };
+
+        let result = purge_remote_database(&settings);
+        assert!(result.is_ok(), "Purge failed: {:?}", result);
+        assert!(result.unwrap().contains("{\"purged\":true}"));
     }
 }

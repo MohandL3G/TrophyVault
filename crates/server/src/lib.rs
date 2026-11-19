@@ -48,6 +48,8 @@ async fn default_fallback() -> impl IntoResponse {
     <li>&bull; <a href="/api/passport.svg">/api/passport.svg</a> &mdash; Vector HUD Achievements Passport</li>
     <li>&bull; <a href="/api/badge.svg">/api/badge.svg</a> &mdash; Compact 400x100 GitHub Profile HUD Badge</li>
     <li>&bull; <span style="color:#ff3366;">POST</span> /api/sync &mdash; Desktop Remote Sync (Bearer Auth)</li>
+    <li>&bull; <span style="color:#ff3366;">POST</span> /api/purge &mdash; Purge Database (Bearer / Admin Auth)</li>
+    <li>&bull; <a href="/api/events">/api/events</a> &mdash; Server-Sent Events (SSE) Live Feed</li>
   </ul>
 </body>
 </html>"#,
@@ -59,6 +61,8 @@ pub fn create_app(state: SharedState, static_dir: PathBuf) -> Router {
     let api_router = Router::new()
         .route("/api/health", get(handlers::health_handler))
         .route("/api/sync", post(handlers::sync_handler))
+        .route("/api/purge", post(handlers::purge_handler))
+        .route("/api/events", get(handlers::events_handler))
         .route("/api/passport.svg", get(handlers::passport_handler))
         .route("/api/badge.svg", get(handlers::badge_handler))
         .route("/api/stats", get(handlers::stats_handler))

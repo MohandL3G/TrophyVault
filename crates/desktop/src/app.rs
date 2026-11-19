@@ -6,8 +6,9 @@ use trophyvault_core::generator::{
 };
 use trophyvault_core::storage::{
     database_to_achievements_data, get_database_path_for_user,
-    load_or_create_database_for_user, save_database,
-    sync_library, LibraryDatabase, ManualGameSetting,
+    load_or_create_database_for_user, purge_remote_database, save_database,
+    sync_library, sync_to_remote_with_mode, LibraryDatabase, ManualGameSetting,
+    SyncMode, SyncSettings,
 };
 use trophyvault_core::steam::{
     detect_steam_users, find_active_steam_id, find_steam_dir, parse_non_steam_shortcuts,
@@ -16,6 +17,9 @@ use trophyvault_core::steam::{
 use eframe::egui;
 use std::fs;
 use std::path::PathBuf;
+
+#[allow(dead_code)]
+pub type TrophyVaultApp = PassportApp;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum AppTab {
@@ -90,6 +94,7 @@ pub struct PassportApp {
     show_api_key_plaintext: bool,
     cloud_sync_status_msg: Option<(String, bool)>,
     has_synced_on_exit: bool,
+    pub show_purge_confirm_modal: bool,
 }
 
 impl PassportApp {
@@ -193,6 +198,7 @@ impl PassportApp {
             show_api_key_plaintext: false,
             cloud_sync_status_msg: None,
             has_synced_on_exit: false,
+            show_purge_confirm_modal: false,
         };
 
         if app.db.preferences.sync_settings.is_none() {
@@ -574,8 +580,23 @@ impl eframe::App for PassportApp {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("☁ Sync Web").clicked() {
-                        self.trigger_cloud_sync();
+                    let current_sync_mode = self
+                        .db
+                        .preferences
+                        .sync_settings
+                        .as_ref()
+                        .map(|s| s.sync_mode)
+                        .unwrap_or_default();
+                    let mode_desc = match current_sync_mode {
+                        SyncMode::Updates => "Incremental Updates [Safe]",
+                        SyncMode::Full => "Full Sync [Mirror Local]",
+                    };
+                    if ui
+                        .button("☁ Sync Web")
+                        .on_hover_text(format!("Sync to Web using configured mode: {}", mode_desc))
+                        .clicked()
+                    {
+                        self.trigger_cloud_sync_with_mode(current_sync_mode);
                     }
                     if ui.button("🔄 Sync Library").clicked() {
                         self.run_sync(ctx);
@@ -656,7 +677,7 @@ impl eframe::App for PassportApp {
             AppTab::Canvas => self.show_canvas_tab(ctx),
             AppTab::CustomGames => self.show_custom_games_tab(ctx),
             AppTab::DatabaseManager => self.show_database_tab(ctx),
-            AppTab::Settings => self.show_settings_tab(ctx),
+            AppTab::Settings => self.render_settings_tab(ctx),
         }
     }
 
@@ -897,11 +918,23 @@ impl PassportApp {
 
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
+                            let current_sync_mode = self
+                                .db
+                                .preferences
+                                .sync_settings
+                                .as_ref()
+                                .map(|s| s.sync_mode)
+                                .unwrap_or_default();
+                            let mode_desc = match current_sync_mode {
+                                SyncMode::Updates => "Incremental Updates [Safe]",
+                                SyncMode::Full => "Full Sync [Mirror Local]",
+                            };
                             if ui
                                 .add_sized([160.0, 32.0], egui::Button::new("☁ Sync to Web Now"))
+                                .on_hover_text(format!("Sync to Web using current mode: {}", mode_desc))
                                 .clicked()
                             {
-                                self.trigger_cloud_sync();
+                                self.trigger_cloud_sync_with_mode(current_sync_mode);
                             }
                             if let Some(s) = &self.db.preferences.sync_settings {
                                 if let Some(ts) = s.last_sync_timestamp {
@@ -1411,7 +1444,19 @@ impl PassportApp {
         });
     }
 
+    #[allow(dead_code)]
     pub fn trigger_cloud_sync(&mut self) {
+        let mode = self
+            .db
+            .preferences
+            .sync_settings
+            .as_ref()
+            .map(|s| s.sync_mode)
+            .unwrap_or_default();
+        self.trigger_cloud_sync_with_mode(mode);
+    }
+
+    pub fn trigger_cloud_sync_with_mode(&mut self, mode: SyncMode) {
         let settings = match &self.db.preferences.sync_settings {
             Some(s) => s.clone(),
             None => {
@@ -1429,7 +1474,12 @@ impl PassportApp {
             return;
         }
 
-        match trophyvault_core::storage::sync_to_remote(&self.db, &settings) {
+        let mode_desc = match mode {
+            SyncMode::Updates => "Updates",
+            SyncMode::Full => "Full",
+        };
+
+        match sync_to_remote_with_mode(&self.db, &settings, mode) {
             Ok(resp_msg) => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -1437,10 +1487,10 @@ impl PassportApp {
                     .unwrap_or(0);
                 if let Some(s) = &mut self.db.preferences.sync_settings {
                     s.last_sync_timestamp = Some(now);
-                    s.last_sync_status = Some("Success".to_string());
+                    s.last_sync_status = Some(format!("Success ({})", mode_desc));
                 }
                 let _ = save_database(&self.db);
-                let ok_msg = format!("✓ Cloud sync successful: {}", resp_msg);
+                let ok_msg = format!("✓ Cloud sync ({}) successful: {}", mode_desc, resp_msg);
                 self.status_notification = Some((ok_msg.clone(), false));
                 self.cloud_sync_status_msg = Some((ok_msg, false));
             }
@@ -1451,10 +1501,42 @@ impl PassportApp {
                     .unwrap_or(0);
                 if let Some(s) = &mut self.db.preferences.sync_settings {
                     s.last_sync_timestamp = Some(now);
-                    s.last_sync_status = Some(format!("Failed: {}", err_msg));
+                    s.last_sync_status = Some(format!("Failed ({}): {}", mode_desc, err_msg));
                 }
                 let _ = save_database(&self.db);
-                let fail_msg = format!("✗ Cloud sync failed: {}", err_msg);
+                let fail_msg = format!("✗ Cloud sync ({}) failed: {}", mode_desc, err_msg);
+                self.status_notification = Some((fail_msg.clone(), true));
+                self.cloud_sync_status_msg = Some((fail_msg, true));
+            }
+        }
+    }
+
+    pub fn trigger_purge_remote_db(&mut self) {
+        let settings = match &self.db.preferences.sync_settings {
+            Some(s) => s.clone(),
+            None => {
+                let msg = "Remote purge failed: Cloud sync settings not configured.".to_string();
+                self.status_notification = Some((msg.clone(), true));
+                self.cloud_sync_status_msg = Some((msg, true));
+                return;
+            }
+        };
+
+        if !settings.is_configured() {
+            let msg = "Remote purge failed: Server URL or API key is not configured.".to_string();
+            self.status_notification = Some((msg.clone(), true));
+            self.cloud_sync_status_msg = Some((msg, true));
+            return;
+        }
+
+        match purge_remote_database(&settings) {
+            Ok(resp_msg) => {
+                let ok_msg = format!("✓ Remote database purged successfully: {}", resp_msg);
+                self.status_notification = Some((ok_msg.clone(), false));
+                self.cloud_sync_status_msg = Some((ok_msg, false));
+            }
+            Err(err_msg) => {
+                let fail_msg = format!("✗ Remote database purge failed: {}", err_msg);
                 self.status_notification = Some((fail_msg.clone(), true));
                 self.cloud_sync_status_msg = Some((fail_msg, true));
             }
@@ -1470,10 +1552,10 @@ impl PassportApp {
         if let Some(settings) = &self.db.preferences.sync_settings {
             if settings.auto_sync_on_exit && settings.is_configured() {
                 eprintln!(
-                    "[TrophyVault] Performing auto-sync on exit to {}...",
-                    settings.server_url
+                    "[TrophyVault] Performing auto-sync on exit to {} (mode: {:?})...",
+                    settings.server_url, settings.sync_mode
                 );
-                match trophyvault_core::storage::sync_to_remote(&self.db, settings) {
+                match sync_to_remote_with_mode(&self.db, settings, settings.sync_mode) {
                     Ok(msg) => eprintln!("[TrophyVault] Auto-sync on exit succeeded: {}", msg),
                     Err(err) => eprintln!("[TrophyVault] Auto-sync on exit failed: {}", err),
                 }
@@ -1481,9 +1563,15 @@ impl PassportApp {
         }
     }
 
-    fn show_settings_tab(&mut self, ctx: &egui::Context) {
+    #[allow(dead_code)]
+    pub fn show_settings_tab(&mut self, ctx: &egui::Context) {
+        self.render_settings_tab(ctx);
+    }
+
+    pub fn render_settings_tab(&mut self, ctx: &egui::Context) {
         let mut pref_changed = false;
-        let mut trigger_sync = false;
+        let mut trigger_sync_mode: Option<SyncMode> = None;
+        let mut trigger_purge_confirm = false;
         let mut toggle_plaintext = false;
         let show_plaintext = self.show_api_key_plaintext;
         let cloud_status = self.cloud_sync_status_msg.clone();
@@ -1507,7 +1595,7 @@ impl PassportApp {
                 .db
                 .preferences
                 .sync_settings
-                .get_or_insert_with(trophyvault_core::storage::SyncSettings::default);
+                .get_or_insert_with(SyncSettings::default);
 
             ui.group(|ui| {
                 ui.set_width(ui.available_width().min(680.0));
@@ -1566,22 +1654,100 @@ impl PassportApp {
                     pref_changed = true;
                 }
 
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new("🔄 Sync Mode:")
+                        .strong()
+                        .color(egui::Color32::from_rgb(0, 240, 255)),
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .radio_value(
+                            &mut sync_settings.sync_mode,
+                            SyncMode::Updates,
+                            "Incremental Updates [Safe]",
+                        )
+                        .changed()
+                    {
+                        pref_changed = true;
+                    }
+                    if ui
+                        .radio_value(
+                            &mut sync_settings.sync_mode,
+                            SyncMode::Full,
+                            "Full Sync [Mirror Local]",
+                        )
+                        .changed()
+                    {
+                        pref_changed = true;
+                    }
+                });
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(
+                        "• Incremental Updates: Upserts games & unlocks; locally deleted games remain intact on Web.\n• Full Sync: Mirrors your exact local library to the remote database, removing deleted games.",
+                    )
+                    .size(11.5)
+                    .italics()
+                    .color(egui::Color32::from_rgb(140, 170, 190)),
+                );
+
                 ui.add_space(14.0);
                 ui.separator();
                 ui.add_space(10.0);
 
-                ui.horizontal(|ui| {
-                    let sync_btn = ui.add_sized(
-                        [170.0, 36.0],
-                        egui::Button::new(
-                            egui::RichText::new("☁ Sync to Web Now")
-                                .strong()
-                                .color(egui::Color32::from_rgb(0, 240, 255)),
-                        ),
-                    );
+                ui.label(
+                    egui::RichText::new("⚡ Actions:")
+                        .strong()
+                        .color(egui::Color32::from_rgb(0, 240, 255)),
+                );
+                ui.add_space(6.0);
 
-                    if sync_btn.clicked() {
-                        trigger_sync = true;
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_sized(
+                            [150.0, 36.0],
+                            egui::Button::new(
+                                egui::RichText::new("🔄 Sync Updates")
+                                    .strong()
+                                    .color(egui::Color32::from_rgb(0, 240, 255)),
+                            ),
+                        )
+                        .on_hover_text("Send incremental updates to remote server (preserves unmentioned games)")
+                        .clicked()
+                    {
+                        trigger_sync_mode = Some(SyncMode::Updates);
+                    }
+
+                    if ui
+                        .add_sized(
+                            [170.0, 36.0],
+                            egui::Button::new(
+                                egui::RichText::new("⚡ Full Sync (Mirror)")
+                                    .strong()
+                                    .color(egui::Color32::from_rgb(255, 200, 50)),
+                            ),
+                        )
+                        .on_hover_text("Completely overwrite remote server database with local library")
+                        .clicked()
+                    {
+                        trigger_sync_mode = Some(SyncMode::Full);
+                    }
+
+                    if ui
+                        .add_sized(
+                            [160.0, 36.0],
+                            egui::Button::new(
+                                egui::RichText::new("🗑 Purge Remote DB")
+                                    .strong()
+                                    .color(egui::Color32::from_rgb(255, 75, 75)),
+                            ),
+                        )
+                        .on_hover_text("Purge and delete all games from remote web server database")
+                        .clicked()
+                    {
+                        trigger_purge_confirm = true;
                     }
                 });
 
@@ -1640,9 +1806,58 @@ impl PassportApp {
             let _ = save_database(&self.db);
         }
 
-        if trigger_sync {
+        if let Some(mode) = trigger_sync_mode {
             let _ = save_database(&self.db);
-            self.trigger_cloud_sync();
+            self.trigger_cloud_sync_with_mode(mode);
+        }
+
+        if trigger_purge_confirm {
+            self.show_purge_confirm_modal = true;
+        }
+
+        if self.show_purge_confirm_modal {
+            let mut close_modal = false;
+            let mut do_purge = false;
+
+            egui::Window::new("⚠️ Confirm Remote Database Purge")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Are you sure you want to purge all games from the remote Web database? This action cannot be undone.",
+                        )
+                        .color(egui::Color32::from_rgb(255, 100, 100))
+                        .strong(),
+                    );
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                egui::RichText::new("Yes, Purge Remote DB")
+                                    .color(egui::Color32::from_rgb(255, 75, 75))
+                                    .strong(),
+                            )
+                            .clicked()
+                        {
+                            do_purge = true;
+                            close_modal = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            close_modal = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                });
+
+            if do_purge {
+                self.trigger_purge_remote_db();
+            }
+            if close_modal {
+                self.show_purge_confirm_modal = false;
+            }
         }
     }
 }

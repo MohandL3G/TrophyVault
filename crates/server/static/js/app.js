@@ -31,11 +31,12 @@ class TrophyVaultApp {
     this.embedFormat = 'passport'; // 'passport' | 'badge' | 'single'
     this.embedAppid = '';
 
+    // Real-time sync & auto-refresh
+    this.eventSource = null;
+    this.autoRefreshInterval = null;
+
     // Cache DOM Elements
     this.dom = {
-      apiStatusChip: document.getElementById('apiStatusChip'),
-      apiStatusDot: document.getElementById('apiStatusDot'),
-      apiStatusText: document.getElementById('apiStatusText'),
       personaChip: document.getElementById('personaChip'),
       avatarTrigger: document.getElementById('avatarTrigger'),
       personaAvatarImg: document.getElementById('personaAvatarImg'),
@@ -122,11 +123,13 @@ class TrophyVaultApp {
   }
 
   /**
-   * Initialize application, restore settings and bind listeners
+   * Initialize application, restore settings, start sync listeners and load data
    */
   async init() {
     this.loadSavedPreferences();
     this.bindEvents();
+    this.initLiveEvents();
+    this.initAutoRefresh();
     await this.loadData();
     this.updateShareEmbedConfig();
   }
@@ -196,13 +199,11 @@ class TrophyVaultApp {
   bindEvents() {
     // Refresh button
     this.dom.refreshBtn?.addEventListener('click', () => {
-      this.setApiStatus('connecting', 'FETCHING...');
       this.loadData();
     });
 
     // Empty state retry button
     this.dom.emptyRetryBtn?.addEventListener('click', () => {
-      this.setApiStatus('connecting', 'FETCHING...');
       this.loadData();
     });
 
@@ -389,39 +390,75 @@ class TrophyVaultApp {
   }
 
   /**
-   * Set API connection indicator status
+   * Connect to Server-Sent Events endpoint for real-time library updates
    */
-  setApiStatus(state, text) {
-    if (!this.dom.apiStatusDot || !this.dom.apiStatusText) return;
-    this.dom.apiStatusDot.className = 'hud-status-dot';
-    
-    if (state === 'online') {
-      this.dom.apiStatusDot.classList.add('online');
-      this.dom.apiStatusText.textContent = text || 'LIVE SYNCED';
-    } else if (state === 'connecting') {
-      this.dom.apiStatusDot.classList.add('pulse');
-      this.dom.apiStatusText.textContent = text || 'CONNECTING...';
-    } else {
-      this.dom.apiStatusDot.classList.add('offline');
-      this.dom.apiStatusText.textContent = text || 'OFFLINE';
+  initLiveEvents() {
+    if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+      console.warn('[TrophyVault] EventSource not supported by browser.');
+      return;
     }
+
+    if (this.eventSource) {
+      try {
+        this.eventSource.close();
+      } catch (_) {}
+      this.eventSource = null;
+    }
+
+    try {
+      const source = new EventSource('/api/events');
+      this.eventSource = source;
+
+      source.addEventListener('update', () => {
+        this.loadData({ silent: true });
+      });
+
+      source.addEventListener('message', (event) => {
+        if (event.data === 'refresh' || event.data === 'update') {
+          this.loadData({ silent: true });
+        }
+      });
+
+      source.onerror = (err) => {
+        // EventSource will automatically attempt reconnection.
+        // If readyState is CLOSED (2), we log without crashing.
+        if (source.readyState === EventSource.CLOSED) {
+          console.debug('[TrophyVault] Live events SSE closed. Background auto-refresh active.');
+        } else {
+          console.debug('[TrophyVault] Live events SSE reconnecting...');
+        }
+      };
+    } catch (err) {
+      console.warn('[TrophyVault] Failed to initialize live events SSE:', err);
+    }
+  }
+
+  /**
+   * Setup background interval for periodic auto-refresh every 30 seconds
+   */
+  initAutoRefresh() {
+    if (this.autoRefreshInterval) {
+      clearInterval(this.autoRefreshInterval);
+    }
+    this.autoRefreshInterval = setInterval(() => {
+      this.loadData({ silent: true });
+    }, 30000);
   }
 
   /**
    * Fetch data from TrophyVault REST endpoints
    */
-  async loadData() {
-    this.setApiStatus('connecting', 'SYNCING...');
-    
+  async loadData({ silent = false } = {}) {
+    if (!silent && this.dom.refreshBtn) {
+      this.dom.refreshBtn.classList.add('loading');
+    }
+
     try {
       const [health, stats, games] = await Promise.all([
         this.api.getHealth(),
         this.api.getStats(),
         this.api.getGames()
       ]);
-
-      const isConnected = !!(health || stats || (games && games.length >= 0));
-      this.setApiStatus(isConnected ? 'online' : 'offline');
 
       this.games = Array.isArray(games) ? games : [];
       this.stats = stats;
@@ -431,7 +468,13 @@ class TrophyVaultApp {
       this.applyFilterAndSort();
     } catch (err) {
       console.error('[TrophyVault] Error loading data:', err);
-      this.setApiStatus('offline', 'OFFLINE');
+      if (!silent) {
+        this.showToast('Failed to load library data', 'error');
+      }
+    } finally {
+      if (!silent && this.dom.refreshBtn) {
+        this.dom.refreshBtn.classList.remove('loading');
+      }
     }
   }
 

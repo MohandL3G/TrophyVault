@@ -62,7 +62,13 @@ pub fn create_app(state: SharedState, static_dir: PathBuf) -> Router {
         .route("/api/passport.svg", get(handlers::passport_handler))
         .route("/api/badge.svg", get(handlers::badge_handler))
         .route("/api/stats", get(handlers::stats_handler))
-        .route("/api/games", get(handlers::games_handler));
+        .route("/api/games", get(handlers::games_handler))
+        .route(
+            "/api/avatar",
+            get(handlers::get_avatar_handler)
+                .post(handlers::upload_avatar_handler)
+                .delete(handlers::delete_avatar_handler),
+        );
 
     let serve_service = if static_dir.exists() {
         ServeDir::new(&static_dir).fallback(default_fallback.into_service())

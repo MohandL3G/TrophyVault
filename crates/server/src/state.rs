@@ -16,7 +16,11 @@ pub fn current_timestamp() -> u64 {
 pub struct ServerConfig {
     pub port: u16,
     pub api_key: String,
+    pub admin_password: Option<String>,
+    pub username: Option<String>,
+    pub slogan: Option<String>,
     pub db_path: PathBuf,
+    pub avatar_path: PathBuf,
     pub static_dir: PathBuf,
 }
 
@@ -30,6 +34,23 @@ impl ServerConfig {
         let api_key = std::env::var("API_KEY")
             .unwrap_or_else(|_| "trophyvault-dev-token".to_string());
 
+        let admin_password = std::env::var("ADMIN_PASSWORD")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let username = std::env::var("PROFILE_USERNAME")
+            .or_else(|_| std::env::var("USERNAME"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let slogan = std::env::var("PROFILE_SLOGAN")
+            .or_else(|_| std::env::var("SLOGAN"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
         let db_path = match std::env::var("DATABASE_PATH") {
             Ok(p) => PathBuf::from(p),
             Err(_) => {
@@ -38,6 +59,24 @@ impl ServerConfig {
                     default_container_data.join("library_database.json")
                 } else {
                     PathBuf::from("./data/library_database.json")
+                }
+            }
+        };
+
+        let avatar_path = match std::env::var("AVATAR_PATH") {
+            Ok(p) => PathBuf::from(p),
+            Err(_) => {
+                let default_container_data = PathBuf::from("/data");
+                if default_container_data.exists() && default_container_data.is_dir() {
+                    default_container_data.join("avatar.png")
+                } else if let Some(parent) = db_path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        parent.join("avatar.png")
+                    } else {
+                        PathBuf::from("./data/avatar.png")
+                    }
+                } else {
+                    PathBuf::from("./data/avatar.png")
                 }
             }
         };
@@ -58,7 +97,11 @@ impl ServerConfig {
         Self {
             port,
             api_key,
+            admin_password,
+            username,
+            slogan,
             db_path,
+            avatar_path,
             static_dir,
         }
     }
@@ -68,7 +111,11 @@ pub struct AppState {
     pub database: LibraryDatabase,
     pub last_modified: SystemTime,
     pub api_key: String,
+    pub admin_password: Option<String>,
+    pub username_override: Option<String>,
+    pub slogan_override: Option<String>,
     pub db_path: PathBuf,
+    pub avatar_path: PathBuf,
 }
 
 pub type SharedState = Arc<RwLock<AppState>>;
@@ -80,7 +127,11 @@ impl AppState {
             database,
             last_modified,
             api_key: config.api_key.clone(),
+            admin_password: config.admin_password.clone(),
+            username_override: config.username.clone(),
+            slogan_override: config.slogan.clone(),
             db_path: config.db_path.clone(),
+            avatar_path: config.avatar_path.clone(),
         }
     }
 
@@ -89,8 +140,51 @@ impl AppState {
             database,
             last_modified: SystemTime::now(),
             api_key: config.api_key.clone(),
+            admin_password: config.admin_password.clone(),
+            username_override: config.username.clone(),
+            slogan_override: config.slogan.clone(),
             db_path: config.db_path.clone(),
+            avatar_path: config.avatar_path.clone(),
         }
+    }
+
+    /// Verifies if a request is authorized with admin privileges via:
+    /// 1. Bearer token matching `api_key` or `admin_password`.
+    /// 2. Header `X-Admin-Password` matching `admin_password` or `api_key`.
+    pub fn is_admin_authorized(&self, headers: &axum::http::HeaderMap) -> bool {
+        // 1. Check Bearer token
+        if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+            if auth_header.starts_with("Bearer ") {
+                let token = auth_header.trim_start_matches("Bearer ").trim();
+                if token == self.api_key {
+                    return true;
+                }
+                if let Some(ref admin_pass) = self.admin_password {
+                    if token == admin_pass {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 2. Check X-Admin-Password header
+        if let Some(admin_hdr) = headers
+            .get("X-Admin-Password")
+            .or_else(|| headers.get("x-admin-password"))
+            .and_then(|v| v.to_str().ok())
+        {
+            let pass = admin_hdr.trim();
+            if let Some(ref admin_pass) = self.admin_password {
+                if pass == admin_pass {
+                    return true;
+                }
+            }
+            if pass == self.api_key {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn load_initial_db(path: &PathBuf) -> (LibraryDatabase, SystemTime) {

@@ -59,6 +59,42 @@ export class TrophyVaultApi {
       return [];
     }
   }
+
+  /**
+   * Upload custom profile avatar (PNG binary)
+   */
+  async uploadAvatar(blob, password) {
+    const res = await fetch(`${this.baseUrl}/api/avatar`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'image/png',
+        'X-Admin-Password': password
+      },
+      body: blob
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || `Upload failed (HTTP ${res.status})`);
+    }
+    return await res.json();
+  }
+
+  /**
+   * Delete custom profile avatar
+   */
+  async deleteAvatar(password) {
+    const res = await fetch(`${this.baseUrl}/api/avatar`, {
+      method: 'DELETE',
+      headers: {
+        'X-Admin-Password': password
+      }
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || `Delete failed (HTTP ${res.status})`);
+    }
+    return await res.json();
+  }
 }
 
 /**

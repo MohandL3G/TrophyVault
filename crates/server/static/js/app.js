@@ -5,6 +5,8 @@
 
 import { TrophyVaultApi, formatPlaytime, getOvrTier, normalizePlatform, generateFallbackBanner } from './api.js';
 
+const PREFS_STORAGE_KEY = 'trophyvault_web_settings';
+
 class TrophyVaultApp {
   constructor() {
     this.api = new TrophyVaultApi();
@@ -12,13 +14,17 @@ class TrophyVaultApp {
     this.stats = null;
     this.filteredGames = [];
     
-    // UI State
+    // UI State with persisted defaults
     this.selectedPlatform = 'all';
+    this.perfectOnly = false; // 100% only filter
     this.searchQuery = '';
     this.currentSort = 'playtime_desc';
     this.currentView = 'grid'; // 'grid' | 'table'
     this.selectedModalGame = null;
     this.trophyFilter = 'all'; // 'all' | 'unlocked' | 'locked'
+
+    // Avatar state
+    this.avatarBlobReady = false;
 
     // Share & Embed State
     this.embedTheme = 'cyberpunk';
@@ -30,8 +36,12 @@ class TrophyVaultApp {
       apiStatusChip: document.getElementById('apiStatusChip'),
       apiStatusDot: document.getElementById('apiStatusDot'),
       apiStatusText: document.getElementById('apiStatusText'),
-      personaName: document.getElementById('personaName'),
+      personaChip: document.getElementById('personaChip'),
+      avatarTrigger: document.getElementById('avatarTrigger'),
+      personaAvatarImg: document.getElementById('personaAvatarImg'),
       personaInitial: document.getElementById('personaInitial'),
+      personaLabel: document.getElementById('personaLabel'),
+      personaName: document.getElementById('personaName'),
       refreshBtn: document.getElementById('refreshBtn'),
       openShareModalBtn: document.getElementById('openShareModalBtn'),
 
@@ -44,16 +54,12 @@ class TrophyVaultApp {
       statCompletionFill: document.getElementById('statCompletionFill'),
       statPlaytime: document.getElementById('statPlaytime'),
 
-      // Hall of Fame
-      hofGrid: document.getElementById('hofGrid'),
-      hofCountBadge: document.getElementById('hofCountBadge'),
-      hofEmptyState: document.getElementById('hofEmptyState'),
-
-      // Library Controls
+      // Library Controls & Filters
       libraryCountBadge: document.getElementById('libraryCountBadge'),
       searchInput: document.getElementById('searchInput'),
       searchClearBtn: document.getElementById('searchClearBtn'),
       platformFilters: document.getElementById('platformFilters'),
+      filter100Btn: document.getElementById('filter100Btn'),
       sortSelect: document.getElementById('sortSelect'),
       viewGridBtn: document.getElementById('viewGridBtn'),
       viewTableBtn: document.getElementById('viewTableBtn'),
@@ -63,6 +69,19 @@ class TrophyVaultApp {
       emptyState: document.getElementById('emptyState'),
       copyCliBtn: document.getElementById('copyCliBtn'),
       emptyRetryBtn: document.getElementById('emptyRetryBtn'),
+
+      // Avatar Modal
+      avatarModal: document.getElementById('avatarModal'),
+      avatarModalCloseBtn: document.getElementById('avatarModalCloseBtn'),
+      avatarDropZone: document.getElementById('avatarDropZone'),
+      avatarCanvas: document.getElementById('avatarCanvas'),
+      avatarDropHint: document.getElementById('avatarDropHint'),
+      avatarFileInput: document.getElementById('avatarFileInput'),
+      avatarChooseFileBtn: document.getElementById('avatarChooseFileBtn'),
+      avatarDeleteBtn: document.getElementById('avatarDeleteBtn'),
+      avatarPasswordInput: document.getElementById('avatarPasswordInput'),
+      avatarCancelBtn: document.getElementById('avatarCancelBtn'),
+      avatarSaveBtn: document.getElementById('avatarSaveBtn'),
 
       // Game Modal
       gameModal: document.getElementById('gameModal'),
@@ -103,12 +122,72 @@ class TrophyVaultApp {
   }
 
   /**
-   * Initialize application and event listeners
+   * Initialize application, restore settings and bind listeners
    */
   async init() {
+    this.loadSavedPreferences();
     this.bindEvents();
     await this.loadData();
     this.updateShareEmbedConfig();
+  }
+
+  /**
+   * Load saved filter & view settings from localStorage
+   */
+  loadSavedPreferences() {
+    try {
+      const raw = localStorage.getItem(PREFS_STORAGE_KEY);
+      if (!raw) return;
+      const prefs = JSON.parse(raw);
+      if (typeof prefs.selectedPlatform === 'string') this.selectedPlatform = prefs.selectedPlatform;
+      if (typeof prefs.perfectOnly === 'boolean') this.perfectOnly = prefs.perfectOnly;
+      if (typeof prefs.currentSort === 'string') this.currentSort = prefs.currentSort;
+      if (typeof prefs.currentView === 'string') this.currentView = prefs.currentView;
+
+      // Apply restored values to DOM controls
+      if (this.dom.platformFilters) {
+        this.dom.platformFilters.querySelectorAll('.hud-filter-btn').forEach(btn => {
+          if (btn.id === 'filter100Btn') return;
+          btn.classList.toggle('active', (btn.dataset.platform || 'all') === this.selectedPlatform);
+        });
+      }
+
+      if (this.dom.filter100Btn) {
+        this.dom.filter100Btn.classList.toggle('active', this.perfectOnly);
+        this.dom.filter100Btn.dataset.perfect = String(this.perfectOnly);
+        this.dom.filter100Btn.setAttribute('aria-pressed', String(this.perfectOnly));
+      }
+
+      if (this.dom.sortSelect) {
+        this.dom.sortSelect.value = this.currentSort;
+      }
+
+      if (this.dom.viewGridBtn && this.dom.viewTableBtn) {
+        this.dom.viewGridBtn.classList.toggle('active', this.currentView === 'grid');
+        this.dom.viewGridBtn.setAttribute('aria-pressed', String(this.currentView === 'grid'));
+        this.dom.viewTableBtn.classList.toggle('active', this.currentView === 'table');
+        this.dom.viewTableBtn.setAttribute('aria-pressed', String(this.currentView === 'table'));
+      }
+    } catch (e) {
+      console.warn('[TrophyVault] Error loading saved preferences:', e);
+    }
+  }
+
+  /**
+   * Persist active UI settings to localStorage
+   */
+  savePreferences() {
+    try {
+      const prefs = {
+        selectedPlatform: this.selectedPlatform,
+        perfectOnly: this.perfectOnly,
+        currentSort: this.currentSort,
+        currentView: this.currentView,
+      };
+      localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
+    } catch (e) {
+      console.warn('[TrophyVault] Error saving preferences:', e);
+    }
   }
 
   /**
@@ -152,22 +231,84 @@ class TrophyVaultApp {
     // Platform filter buttons
     this.dom.platformFilters?.addEventListener('click', (e) => {
       const btn = e.target.closest('.hud-filter-btn');
-      if (!btn) return;
-      this.dom.platformFilters.querySelectorAll('.hud-filter-btn').forEach(b => b.classList.remove('active'));
+      if (!btn || btn.id === 'filter100Btn') return;
+      this.dom.platformFilters.querySelectorAll('.hud-filter-btn').forEach(b => {
+        if (b.id !== 'filter100Btn') b.classList.remove('active');
+      });
       btn.classList.add('active');
       this.selectedPlatform = btn.dataset.platform || 'all';
+      this.savePreferences();
+      this.applyFilterAndSort();
+    });
+
+    // 100% Only Filter Toggle Button
+    this.dom.filter100Btn?.addEventListener('click', () => {
+      this.perfectOnly = !this.perfectOnly;
+      this.dom.filter100Btn.classList.toggle('active', this.perfectOnly);
+      this.dom.filter100Btn.dataset.perfect = String(this.perfectOnly);
+      this.dom.filter100Btn.setAttribute('aria-pressed', String(this.perfectOnly));
+      this.savePreferences();
       this.applyFilterAndSort();
     });
 
     // Sort selector
     this.dom.sortSelect?.addEventListener('change', (e) => {
       this.currentSort = e.target.value;
+      this.savePreferences();
       this.applyFilterAndSort();
     });
 
     // View mode toggle
     this.dom.viewGridBtn?.addEventListener('click', () => this.setViewMode('grid'));
     this.dom.viewTableBtn?.addEventListener('click', () => this.setViewMode('table'));
+
+    // Avatar Trigger: Open avatar customization modal
+    this.dom.avatarTrigger?.addEventListener('click', () => this.openAvatarModal());
+    this.dom.avatarTrigger?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.openAvatarModal();
+      }
+    });
+
+    // Avatar Modal Close handlers
+    this.dom.avatarModalCloseBtn?.addEventListener('click', () => this.closeModal(this.dom.avatarModal));
+    this.dom.avatarCancelBtn?.addEventListener('click', () => this.closeModal(this.dom.avatarModal));
+
+    // Avatar File chooser and drag & drop
+    this.dom.avatarChooseFileBtn?.addEventListener('click', () => {
+      this.dom.avatarFileInput?.click();
+    });
+    this.dom.avatarDropZone?.addEventListener('click', (e) => {
+      if (e.target.tagName !== 'BUTTON') {
+        this.dom.avatarFileInput?.click();
+      }
+    });
+    this.dom.avatarFileInput?.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        this.handleAvatarFile(e.target.files[0]);
+      }
+    });
+    this.dom.avatarDropZone?.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      this.dom.avatarDropZone.classList.add('dragover');
+    });
+    this.dom.avatarDropZone?.addEventListener('dragleave', () => {
+      this.dom.avatarDropZone.classList.remove('dragover');
+    });
+    this.dom.avatarDropZone?.addEventListener('drop', (e) => {
+      e.preventDefault();
+      this.dom.avatarDropZone.classList.remove('dragover');
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        this.handleAvatarFile(e.dataTransfer.files[0]);
+      }
+    });
+
+    // Save avatar
+    this.dom.avatarSaveBtn?.addEventListener('click', () => this.saveAvatar());
+
+    // Remove avatar
+    this.dom.avatarDeleteBtn?.addEventListener('click', () => this.deleteAvatar());
 
     // Modals: Open Share & Embed
     this.dom.openShareModalBtn?.addEventListener('click', () => {
@@ -180,7 +321,7 @@ class TrophyVaultApp {
     this.dom.shareModalCloseBtn?.addEventListener('click', () => this.closeModal(this.dom.shareModal));
 
     // Close modal on backdrop click
-    [this.dom.gameModal, this.dom.shareModal].forEach(modal => {
+    [this.dom.gameModal, this.dom.shareModal, this.dom.avatarModal].forEach(modal => {
       modal?.addEventListener('click', (e) => {
         if (e.target === modal) this.closeModal(modal);
       });
@@ -189,8 +330,9 @@ class TrophyVaultApp {
     // Close modal on Escape key
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (this.dom.gameModal.style.display !== 'none') this.closeModal(this.dom.gameModal);
-        if (this.dom.shareModal.style.display !== 'none') this.closeModal(this.dom.shareModal);
+        if (this.dom.gameModal && this.dom.gameModal.style.display !== 'none') this.closeModal(this.dom.gameModal);
+        if (this.dom.shareModal && this.dom.shareModal.style.display !== 'none') this.closeModal(this.dom.shareModal);
+        if (this.dom.avatarModal && this.dom.avatarModal.style.display !== 'none') this.closeModal(this.dom.avatarModal);
       }
     });
 
@@ -285,7 +427,6 @@ class TrophyVaultApp {
       this.stats = stats;
 
       this.renderHeaderAndHero();
-      this.renderHallOfFame();
       this.populateSingleGameDropdown();
       this.applyFilterAndSort();
     } catch (err) {
@@ -302,9 +443,34 @@ class TrophyVaultApp {
     const stats = this.stats || {};
 
     // Persona name
-    const persona = stats.persona_name || stats.username || stats.personaName || 'MOHANDL3G';
+    const persona = stats.username || stats.persona_name || stats.personaName || 'MOHANDL3G';
     if (this.dom.personaName) this.dom.personaName.textContent = persona;
     if (this.dom.personaInitial) this.dom.personaInitial.textContent = persona.charAt(0).toUpperCase();
+
+    // Slogan display: default to empty/hidden if not provided or empty string
+    if (this.dom.personaLabel) {
+      const slogan = (stats.slogan || '').trim();
+      if (slogan.length > 0) {
+        this.dom.personaLabel.textContent = slogan.toUpperCase();
+        this.dom.personaLabel.style.display = 'block';
+      } else {
+        this.dom.personaLabel.textContent = '';
+        this.dom.personaLabel.style.display = 'none';
+      }
+    }
+
+    // Avatar image loading with initial fallback
+    if (this.dom.personaAvatarImg) {
+      this.dom.personaAvatarImg.src = `/api/avatar?t=${Date.now()}`;
+      this.dom.personaAvatarImg.onload = () => {
+        this.dom.personaAvatarImg.style.display = 'block';
+        if (this.dom.personaInitial) this.dom.personaInitial.style.display = 'none';
+      };
+      this.dom.personaAvatarImg.onerror = () => {
+        this.dom.personaAvatarImg.style.display = 'none';
+        if (this.dom.personaInitial) this.dom.personaInitial.style.display = 'block';
+      };
+    }
 
     // Stats calculation
     const totalGames = stats.total_games ?? stats.total_configs ?? games.length;
@@ -339,75 +505,7 @@ class TrophyVaultApp {
   }
 
   /**
-   * Render 100% Hall of Fame Showcase Grid
-   */
-  renderHallOfFame() {
-    if (!this.dom.hofGrid) return;
-    const completed = this.games.filter(g => g.platinum === true || g.pct === 100 || (g.unlocked === g.total && g.total > 0));
-
-    if (this.dom.hofCountBadge) {
-      this.dom.hofCountBadge.textContent = `${completed.length} TITLES`;
-    }
-
-    this.dom.hofGrid.innerHTML = '';
-
-    if (completed.length === 0) {
-      if (this.dom.hofEmptyState) this.dom.hofEmptyState.style.display = 'block';
-      return;
-    }
-
-    if (this.dom.hofEmptyState) this.dom.hofEmptyState.style.display = 'none';
-
-    completed.forEach(game => {
-      const card = document.createElement('div');
-      card.className = 'hud-hof-card';
-      card.setAttribute('role', 'button');
-      card.setAttribute('tabindex', '0');
-
-      const bannerUrl = game.appid && /^\d+$/.test(game.appid)
-        ? `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${game.appid}/header.jpg`
-        : generateFallbackBanner(game.name, game.platform);
-
-      card.innerHTML = `
-        <div class="hud-hof-banner">
-          <img class="hud-hof-banner-img" src="${bannerUrl}" alt="${this.escapeHtml(game.name)}" loading="lazy">
-          <div class="hud-hof-banner-overlay"></div>
-          <div class="hud-hof-plat-badge">
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
-              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-            </svg>
-            <span>100% PLATINUM</span>
-          </div>
-        </div>
-        <div class="hud-hof-content">
-          <h3 class="hud-hof-title" title="${this.escapeHtml(game.name)}">${this.escapeHtml(game.name)}</h3>
-          <div class="hud-hof-meta-row">
-            <span>${normalizePlatform(game.platform)}</span>
-            <span class="hud-hof-trophy-pill">${game.unlocked || game.total}/${game.total} Trophies</span>
-          </div>
-        </div>
-      `;
-
-      // Fallback for broken store image
-      const img = card.querySelector('.hud-hof-banner-img');
-      img.addEventListener('error', () => {
-        img.src = generateFallbackBanner(game.name, game.platform);
-      });
-
-      card.addEventListener('click', () => this.openGameModal(game));
-      card.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          this.openGameModal(game);
-        }
-      });
-
-      this.dom.hofGrid.appendChild(card);
-    });
-  }
-
-  /**
-   * Apply filters and sorting to the games collection
+   * Apply filters and sorting to the unified games collection
    */
   applyFilterAndSort() {
     let result = [...this.games];
@@ -418,6 +516,11 @@ class TrophyVaultApp {
         const norm = normalizePlatform(g.platform).toLowerCase();
         return norm === this.selectedPlatform;
       });
+    }
+
+    // Filter by 100% Only
+    if (this.perfectOnly) {
+      result = result.filter(g => g.platinum === true || g.pct === 100 || (g.unlocked === g.total && g.total > 0));
     }
 
     // Filter by search query
@@ -457,7 +560,11 @@ class TrophyVaultApp {
   renderLibrary() {
     const count = this.filteredGames.length;
     if (this.dom.libraryCountBadge) {
-      this.dom.libraryCountBadge.textContent = `${count} ${count === 1 ? 'GAME' : 'GAMES'}`;
+      if (this.perfectOnly) {
+        this.dom.libraryCountBadge.textContent = `${count} ${count === 1 ? 'PERFECT TITLE' : 'PERFECT TITLES'}`;
+      } else {
+        this.dom.libraryCountBadge.textContent = `${count} ${count === 1 ? 'GAME' : 'GAMES'}`;
+      }
     }
 
     if (this.games.length === 0 || count === 0) {
@@ -493,7 +600,11 @@ class TrophyVaultApp {
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
 
-      const isCompleted = game.platinum === true || game.pct === 100;
+      const isCompleted = game.platinum === true || game.pct === 100 || (game.unlocked === game.total && game.total > 0);
+      if (isCompleted) {
+        card.classList.add('is-perfect');
+      }
+
       const bannerUrl = game.appid && /^\d+$/.test(game.appid)
         ? `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${game.appid}/header.jpg`
         : generateFallbackBanner(game.name, game.platform);
@@ -553,7 +664,11 @@ class TrophyVaultApp {
 
     this.filteredGames.forEach(game => {
       const row = document.createElement('tr');
-      const isCompleted = game.platinum === true || game.pct === 100;
+      const isCompleted = game.platinum === true || game.pct === 100 || (game.unlocked === game.total && game.total > 0);
+      if (isCompleted) {
+        card.classList.add('is-perfect');
+      }
+
       const bannerUrl = game.appid && /^\d+$/.test(game.appid)
         ? `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${game.appid}/header.jpg`
         : generateFallbackBanner(game.name, game.platform);
@@ -880,6 +995,182 @@ class TrophyVaultApp {
     if (!modal) return;
     modal.style.display = 'none';
     document.body.style.overflow = '';
+  }
+
+  /**
+   * Open Avatar Customization Modal
+   */
+  openAvatarModal() {
+    this.avatarBlobReady = false;
+    const canvas = this.dom.avatarCanvas;
+    const ctx = canvas?.getContext('2d');
+    if (canvas && ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      canvas.style.display = 'none';
+    }
+    if (this.dom.avatarDropHint) this.dom.avatarDropHint.style.display = 'flex';
+    if (this.dom.avatarFileInput) this.dom.avatarFileInput.value = '';
+
+    // If an avatar is currently loaded on the page, draw it as the initial canvas preview
+    if (this.dom.personaAvatarImg && this.dom.personaAvatarImg.style.display !== 'none' && this.dom.personaAvatarImg.complete) {
+      try {
+        if (canvas && ctx) {
+          ctx.drawImage(this.dom.personaAvatarImg, 0, 0, 256, 256);
+          canvas.style.display = 'block';
+          if (this.dom.avatarDropHint) this.dom.avatarDropHint.style.display = 'none';
+        }
+      } catch (e) {}
+    }
+
+    // Restore cached password if available in sessionStorage
+    const cachedPass = sessionStorage.getItem('trophyvault_admin_pass');
+    if (this.dom.avatarPasswordInput && cachedPass) {
+      this.dom.avatarPasswordInput.value = cachedPass;
+    }
+
+    this.openModal(this.dom.avatarModal);
+  }
+
+  /**
+   * Process and auto-fit selected avatar file to square canvas
+   */
+  handleAvatarFile(file) {
+    if (!file || !file.type.startsWith('image/')) {
+      this.showToast('Please select a valid image file', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = this.dom.avatarCanvas;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const size = 256;
+        canvas.width = size;
+        canvas.height = size;
+
+        // Auto center-crop and fit to square canvas
+        const minDim = Math.min(img.width, img.height);
+        const sx = (img.width - minDim) / 2;
+        const sy = (img.height - minDim) / 2;
+
+        ctx.clearRect(0, 0, size, size);
+        ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
+
+        canvas.style.display = 'block';
+        if (this.dom.avatarDropHint) this.dom.avatarDropHint.style.display = 'none';
+        this.avatarBlobReady = true;
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  /**
+   * Upload and save custom profile avatar
+   */
+  async saveAvatar() {
+    const password = this.dom.avatarPasswordInput?.value.trim();
+    if (!password) {
+      this.showToast('Please enter your Admin Password or API Key', 'error');
+      this.dom.avatarPasswordInput?.focus();
+      return;
+    }
+
+    if (!this.avatarBlobReady || !this.dom.avatarCanvas) {
+      this.showToast('Please choose an image file first', 'error');
+      return;
+    }
+
+    const saveBtn = this.dom.avatarSaveBtn;
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Uploading...';
+    }
+
+    try {
+      this.dom.avatarCanvas.toBlob(async (blob) => {
+        if (!blob) {
+          this.showToast('Failed to generate image blob', 'error');
+          if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Upload & Save Avatar';
+          }
+          return;
+        }
+
+        try {
+          await this.api.uploadAvatar(blob, password);
+          sessionStorage.setItem('trophyvault_admin_pass', password);
+          
+          if (this.dom.personaAvatarImg) {
+            this.dom.personaAvatarImg.src = `/api/avatar?t=${Date.now()}`;
+            this.dom.personaAvatarImg.style.display = 'block';
+            if (this.dom.personaInitial) this.dom.personaInitial.style.display = 'none';
+          }
+
+          this.showToast('Avatar updated successfully!');
+          this.closeModal(this.dom.avatarModal);
+        } catch (err) {
+          console.error('[TrophyVault] Upload avatar failed:', err);
+          this.showToast(err.message || 'Failed to upload avatar', 'error');
+        } finally {
+          if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Upload & Save Avatar';
+          }
+        }
+      }, 'image/png');
+    } catch (e) {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Upload & Save Avatar';
+      }
+      this.showToast(e.message || 'Error processing image', 'error');
+    }
+  }
+
+  /**
+   * Delete custom profile avatar
+   */
+  async deleteAvatar() {
+    const password = this.dom.avatarPasswordInput?.value.trim();
+    if (!password) {
+      this.showToast('Please enter your Admin Password or API Key to remove avatar', 'error');
+      this.dom.avatarPasswordInput?.focus();
+      return;
+    }
+
+    const delBtn = this.dom.avatarDeleteBtn;
+    if (delBtn) {
+      delBtn.disabled = true;
+      delBtn.textContent = 'Removing...';
+    }
+
+    try {
+      await this.api.deleteAvatar(password);
+      sessionStorage.setItem('trophyvault_admin_pass', password);
+
+      if (this.dom.personaAvatarImg) {
+        this.dom.personaAvatarImg.style.display = 'none';
+      }
+      if (this.dom.personaInitial) {
+        this.dom.personaInitial.style.display = 'block';
+      }
+
+      this.showToast('Custom avatar removed successfully');
+      this.closeModal(this.dom.avatarModal);
+    } catch (err) {
+      console.error('[TrophyVault] Delete avatar failed:', err);
+      this.showToast(err.message || 'Failed to remove avatar', 'error');
+    } finally {
+      if (delBtn) {
+        delBtn.disabled = false;
+        delBtn.textContent = 'Remove';
+      }
+    }
   }
 
   /**

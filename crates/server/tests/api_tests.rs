@@ -88,7 +88,11 @@ fn setup_test_app() -> (axum::Router, tempfile::TempDir, String) {
     let config = ServerConfig {
         port: 5050,
         api_key: api_key.clone(),
+        admin_password: Some("admin-pass-123".to_string()),
+        username: None,
+        slogan: None,
         db_path,
+        avatar_path: temp_dir.path().join("avatar.png"),
         static_dir: static_dir.clone(),
     };
 
@@ -135,10 +139,107 @@ async fn test_stats_endpoint() {
     let stats: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
 
     assert_eq!(stats["username"], "HunterOfYharnam");
+    assert_eq!(stats["slogan"], "");
+    assert_eq!(stats["has_avatar"], false);
     assert_eq!(stats["total_games"], 2);
     assert_eq!(stats["perfect_games"], 1);
     assert_eq!(stats["total_achievements"], 70);
     assert_eq!(stats["unlocked_achievements"], 55);
+}
+
+#[tokio::test]
+async fn test_stats_endpoint_with_env_overrides() {
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let static_dir = temp_dir.path().join("static");
+    std::fs::create_dir_all(&static_dir).unwrap();
+
+    let config = ServerConfig {
+        port: 5050,
+        api_key: "key".to_string(),
+        admin_password: Some("adminpass".to_string()),
+        username: Some("CustomOverriddenUser".to_string()),
+        slogan: Some("CYBER_HUNTER".to_string()),
+        db_path: temp_dir.path().join("db.json"),
+        avatar_path: temp_dir.path().join("avatar.png"),
+        static_dir: static_dir.clone(),
+    };
+
+    let test_db = create_test_db();
+    let state = Arc::new(RwLock::new(AppState::with_database(&config, test_db)));
+    let app = create_app(state, static_dir);
+
+    let req = Request::builder().uri("/api/stats").method("GET").body(Body::empty()).unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let stats: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(stats["username"], "CustomOverriddenUser");
+    assert_eq!(stats["slogan"], "CYBER_HUNTER");
+}
+
+#[tokio::test]
+async fn test_avatar_endpoints_crud_and_auth() {
+    let (app, temp_dir, _key) = setup_test_app();
+
+    // 1. GET /api/avatar when not uploaded -> 404
+    let req = Request::builder().uri("/api/avatar").method("GET").body(Body::empty()).unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // 2. POST /api/avatar unauthorized (no password) -> 401
+    let fake_png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01];
+    let req = Request::builder()
+        .uri("/api/avatar")
+        .method("POST")
+        .body(Body::from(fake_png.clone()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // 3. POST /api/avatar authorized with X-Admin-Password -> 200
+    let req = Request::builder()
+        .uri("/api/avatar")
+        .method("POST")
+        .header("X-Admin-Password", "admin-pass-123")
+        .body(Body::from(fake_png.clone()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Verify avatar file was written
+    assert!(temp_dir.path().join("avatar.png").exists());
+
+    // 4. GET /api/avatar -> 200 with image/png
+    let req = Request::builder().uri("/api/avatar").method("GET").body(Body::empty()).unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
+    let downloaded = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(downloaded.to_vec(), fake_png);
+
+    // 5. DELETE /api/avatar unauthorized -> 401
+    let req = Request::builder().uri("/api/avatar").method("DELETE").body(Body::empty()).unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // 6. DELETE /api/avatar authorized with Bearer token -> 200
+    let req = Request::builder()
+        .uri("/api/avatar")
+        .method("DELETE")
+        .header("Authorization", "Bearer test-secret-token")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // File should be deleted
+    assert!(!temp_dir.path().join("avatar.png").exists());
+
+    // 7. GET /api/avatar again -> 404
+    let req = Request::builder().uri("/api/avatar").method("GET").body(Body::empty()).unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -328,7 +429,11 @@ async fn test_static_index_serving() {
     let config = ServerConfig {
         port: 5050,
         api_key: "key".to_string(),
+        admin_password: None,
+        username: None,
+        slogan: None,
         db_path: temp_dir.path().join("db.json"),
+        avatar_path: temp_dir.path().join("avatar.png"),
         static_dir: static_dir.clone(),
     };
     let state = Arc::new(RwLock::new(AppState::new(&config)));

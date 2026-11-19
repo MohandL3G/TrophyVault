@@ -8,7 +8,11 @@ services:
     environment:
       - PORT=5050
       - API_KEY=trophyvault-secret-key-change-me
+      - ADMIN_PASSWORD=trophyvault-admin-password-change-me
+      - USERNAME=MohandL3G
+      - SLOGAN=HUNTER
       - DATABASE_PATH=/data/library_database.json
+      - AVATAR_PATH=/data/avatar.png
     volumes:
       - trophyvault-data:/data
 

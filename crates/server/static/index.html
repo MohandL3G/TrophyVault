@@ -44,13 +44,19 @@
           <span class="hud-status-text" id="apiStatusText">CONNECTING...</span>
         </div>
 
-        <!-- Active Persona Chip -->
+        <!-- Active Persona Chip with Interactive Avatar -->
         <div class="hud-persona-chip" id="personaChip">
-          <div class="hud-persona-avatar">
+          <div class="hud-persona-avatar" id="avatarTrigger" role="button" tabindex="0" title="Click to customize profile avatar">
+            <img id="personaAvatarImg" src="/api/avatar" alt="Avatar" class="hud-persona-avatar-img" style="display: none;">
             <span id="personaInitial">H</span>
+            <div class="hud-avatar-edit-badge" title="Change Avatar">
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor">
+                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+              </svg>
+            </div>
           </div>
           <div class="hud-persona-meta">
-            <span class="hud-persona-label">HUNTER</span>
+            <span class="hud-persona-label" id="personaLabel" style="display: none;"></span>
             <span class="hud-persona-name" id="personaName">MOHANDL3G</span>
           </div>
         </div>
@@ -156,36 +162,12 @@
         </div>
       </section>
 
-      <!-- 100% Hall of Fame Showcase -->
-      <section class="hud-section" id="hallOfFameSection">
-        <div class="hud-section-header">
-          <div class="hud-section-title-wrap">
-            <div class="hud-badge-gold">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-              </svg>
-              <span>PLATINUM SHOWCASE</span>
-            </div>
-            <h2 class="hud-section-title">100% HALL OF FAME</h2>
-            <p class="hud-section-desc">Mastered titles with every trophy and achievement completed.</p>
-          </div>
-          <div class="hud-hof-count" id="hofCountBadge">0 TITLES</div>
-        </div>
-
-        <div class="hud-hof-grid" id="hofGrid">
-          <!-- Dynamically populated completed cards -->
-          <div class="hud-hof-empty" id="hofEmptyState" style="display: none;">
-            <p>No 100% completed games recorded yet. Keep hunting!</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- Complete Games Library -->
+      <!-- Unified Games Collection Section -->
       <section class="hud-section" id="librarySection">
         <div class="hud-section-header">
           <div class="hud-section-title-wrap">
-            <h2 class="hud-section-title">GAMES ARCHIVE</h2>
-            <p class="hud-section-desc">Browse, search, and inspect your unified cross-platform trophy collection.</p>
+            <h2 class="hud-section-title">GAMES COLLECTION</h2>
+            <p class="hud-section-desc">Unified cross-platform trophy collection with real-time completion tracking.</p>
           </div>
           <div class="hud-library-count" id="libraryCountBadge">0 GAMES</div>
         </div>
@@ -202,13 +184,20 @@
             <button class="hud-search-clear" id="searchClearBtn" aria-label="Clear search" style="display: none;">&times;</button>
           </div>
 
-          <!-- Platform Filter Buttons -->
+          <!-- Platform Filter Buttons & 100% Toggle -->
           <div class="hud-filter-group" id="platformFilters" role="radiogroup" aria-label="Filter by Platform">
             <button class="hud-filter-btn active" data-platform="all">All</button>
             <button class="hud-filter-btn" data-platform="steam">Steam</button>
             <button class="hud-filter-btn" data-platform="luatools">LuaTools</button>
             <button class="hud-filter-btn" data-platform="non-steam">Non-Steam</button>
             <button class="hud-filter-btn" data-platform="ports">Ports</button>
+            <div class="hud-filter-divider"></div>
+            <button class="hud-filter-btn hud-filter-100" id="filter100Btn" data-perfect="false" title="Filter 100% Completed Games Only">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" class="gold-trophy-icon">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+              </svg>
+              <span>100% Only</span>
+            </button>
           </div>
 
           <!-- Sort & View Mode Toggles -->
@@ -511,6 +500,60 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Avatar Upload & Customization Modal -->
+  <div class="hud-modal-backdrop" id="avatarModal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="avatarModalTitle">
+    <div class="hud-modal hud-modal-sm">
+      <div class="hud-modal-header">
+        <div class="hud-modal-title-wrap">
+          <span class="hud-modal-tag">PROFILE CUSTOMIZATION</span>
+          <h2 class="hud-modal-title" id="avatarModalTitle">UPDATE AVATAR</h2>
+        </div>
+        <button class="hud-modal-close" id="avatarModalCloseBtn" aria-label="Close modal">&times;</button>
+      </div>
+
+      <div class="hud-modal-body">
+        <!-- Canvas Crop & Scale Area -->
+        <div class="hud-avatar-upload-area">
+          <div class="hud-avatar-preview-wrap" id="avatarDropZone">
+            <canvas id="avatarCanvas" width="256" height="256" class="hud-avatar-canvas"></canvas>
+            <div class="hud-avatar-drop-hint" id="avatarDropHint">
+              <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <span class="hint-title">Click or Drop Image</span>
+              <span class="hint-sub">Automatically fit to square avatar canvas</span>
+            </div>
+            <input type="file" id="avatarFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display: none;">
+          </div>
+
+          <div class="hud-avatar-actions-row">
+            <button class="hud-btn hud-btn-outline" id="avatarChooseFileBtn">Choose Image File</button>
+            <button class="hud-btn hud-btn-danger" id="avatarDeleteBtn" title="Remove custom avatar">Remove</button>
+          </div>
+        </div>
+
+        <!-- Security / Password Field -->
+        <div class="hud-form-group" style="margin-top: 1.5rem;">
+          <label for="avatarPasswordInput" class="hud-form-label">
+            <span>ADMIN PASSWORD / API KEY:</span>
+            <span class="hud-form-required">*</span>
+          </label>
+          <input type="password" id="avatarPasswordInput" class="hud-input" placeholder="Enter ADMIN_PASSWORD or API_KEY" autocomplete="current-password">
+          <p class="hud-form-help">Requires the <code>ADMIN_PASSWORD</code> or <code>API_KEY</code> configured in your Docker <code>.env</code> file.</p>
+        </div>
+      </div>
+
+      <div class="hud-modal-footer">
+        <button class="hud-btn hud-btn-secondary" id="avatarCancelBtn">Cancel</button>
+        <button class="hud-btn hud-btn-primary glow-button" id="avatarSaveBtn">
+          <span>Upload &amp; Save Avatar</span>
+        </button>
       </div>
     </div>
   </div>

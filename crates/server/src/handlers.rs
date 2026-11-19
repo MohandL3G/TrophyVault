@@ -42,6 +42,7 @@ pub struct BadgeQuery {
 #[derive(Debug, Serialize)]
 pub struct LibraryStatsSummary {
     pub username: String,
+    pub slogan: String,
     pub title: String,
     pub theme: String,
     pub total_games: usize,
@@ -56,6 +57,7 @@ pub struct LibraryStatsSummary {
     pub total_playtime_minutes: u64,
     pub total_playtime_formatted: String,
     pub last_updated: u64,
+    pub has_avatar: bool,
 }
 
 /// JSON game item returned by /api/games.
@@ -211,14 +213,16 @@ pub async fn passport_handler(
     let mode = query.mode.as_deref().unwrap_or("overall");
     let requested_appid = query.appid.as_deref();
 
-    let username_override = query
-        .username
+    let default_username = current_state
+        .username_override
         .as_deref()
         .unwrap_or(&db.preferences.username);
-    let title_override = query
-        .title
+    let username_override = query.username.as_deref().unwrap_or(default_username);
+    let default_title = current_state
+        .slogan_override
         .as_deref()
         .unwrap_or(&db.preferences.title_line);
+    let title_override = query.title.as_deref().unwrap_or(default_title);
 
     // Determine if single game passport is requested
     let mut selected_game = None;
@@ -270,9 +274,11 @@ pub async fn badge_handler(
     let current_state = state.read().await;
     let mut achievements_data = database_to_achievements_data(&current_state.database);
 
-    if let Some(uname) = query.username {
-        achievements_data.username = uname;
-    }
+    let default_uname = current_state
+        .username_override
+        .as_deref()
+        .unwrap_or(&current_state.database.preferences.username);
+    achievements_data.username = query.username.unwrap_or_else(|| default_uname.to_string());
 
     let theme_str = query.theme.as_deref().unwrap_or("cyberpunk");
     let theme = PassportTheme::parse_theme(theme_str);
@@ -290,8 +296,21 @@ pub async fn stats_handler(State(state): State<SharedState>) -> Json<LibraryStat
     let data = database_to_achievements_data(db);
     let s = &data.stats;
 
+    let username = current_state
+        .username_override
+        .clone()
+        .unwrap_or_else(|| db.preferences.username.clone());
+
+    let slogan = current_state
+        .slogan_override
+        .clone()
+        .unwrap_or_default();
+
+    let has_avatar = current_state.avatar_path.exists();
+
     let summary = LibraryStatsSummary {
-        username: db.preferences.username.clone(),
+        username,
+        slogan,
         title: db.preferences.title_line.clone(),
         theme: db.preferences.theme.clone(),
         total_games: db.games.len(),
@@ -306,6 +325,7 @@ pub async fn stats_handler(State(state): State<SharedState>) -> Json<LibraryStat
         total_playtime_minutes: s.total_playtime_minutes,
         total_playtime_formatted: format_playtime(s.total_playtime_minutes),
         last_updated: db.last_updated,
+        has_avatar,
     };
 
     Json(summary)
@@ -347,4 +367,146 @@ pub async fn games_handler(State(state): State<SharedState>) -> Json<Vec<GameSum
     });
 
     Json(games)
+}
+
+/// GET /api/avatar
+/// Returns custom avatar image if uploaded, or 404 NOT_FOUND.
+pub async fn get_avatar_handler(State(state): State<SharedState>) -> Response {
+    let current_state = state.read().await;
+    let path = &current_state.avatar_path;
+    if !path.exists() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    match tokio::fs::read(path).await {
+        Ok(bytes) => {
+            let content_type = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+                "image/png"
+            } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+                "image/jpeg"
+            } else if bytes.starts_with(b"RIFF") && bytes.len() > 12 && &bytes[8..12] == b"WEBP" {
+                "image/webp"
+            } else {
+                "image/png"
+            };
+
+            let mut res = bytes.into_response();
+            let headers = res.headers_mut();
+            headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+            headers.insert(header::CACHE_CONTROL, "public, max-age=60".parse().unwrap());
+            res
+        }
+        Err(e) => {
+            tracing::error!("Failed to read avatar file: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// POST /api/avatar
+/// Uploads custom avatar image (PNG/JPEG/WebP) up to 5MB.
+/// Authenticated via X-Admin-Password or Bearer token.
+pub async fn upload_avatar_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let current_state = state.read().await;
+    if !current_state.is_admin_authorized(&headers) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "status": "error",
+                "message": "Unauthorized: Invalid or missing admin password"
+            })),
+        ));
+    }
+
+    if body.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "status": "error",
+                "message": "Bad Request: Image body is empty"
+            })),
+        ));
+    }
+
+    if body.len() > 5 * 1024 * 1024 {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(json!({
+                "status": "error",
+                "message": "Payload Too Large: Avatar exceeds 5MB limit"
+            })),
+        ));
+    }
+
+    if let Some(parent) = current_state.avatar_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+    }
+
+    if let Err(e) = tokio::fs::write(&current_state.avatar_path, &body).await {
+        tracing::error!("Failed to write avatar: {}", e);
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "status": "error",
+                "message": format!("Disk write failure: {}", e)
+            })),
+        ));
+    }
+
+    tracing::info!("Custom avatar saved to {}", current_state.avatar_path.display());
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "status": "ok",
+            "message": "Avatar uploaded successfully",
+            "avatar_url": "/api/avatar"
+        })),
+    ).into_response())
+}
+
+/// DELETE /api/avatar
+/// Removes custom avatar.
+/// Authenticated via X-Admin-Password or Bearer token.
+pub async fn delete_avatar_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let current_state = state.read().await;
+    if !current_state.is_admin_authorized(&headers) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "status": "error",
+                "message": "Unauthorized: Invalid or missing admin password"
+            })),
+        ));
+    }
+
+    if current_state.avatar_path.exists() {
+        if let Err(e) = tokio::fs::remove_file(&current_state.avatar_path).await {
+            tracing::error!("Failed to delete avatar: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "status": "error",
+                    "message": format!("Disk removal failure: {}", e)
+                })),
+            ));
+        }
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "status": "ok",
+            "message": "Avatar removed successfully"
+        })),
+    ).into_response())
 }

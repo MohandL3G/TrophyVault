@@ -116,6 +116,7 @@ pub struct AppState {
     pub slogan_override: Option<String>,
     pub db_path: PathBuf,
     pub avatar_path: PathBuf,
+    pub update_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 pub type SharedState = Arc<RwLock<AppState>>;
@@ -123,6 +124,7 @@ pub type SharedState = Arc<RwLock<AppState>>;
 impl AppState {
     pub fn new(config: &ServerConfig) -> Self {
         let (database, last_modified) = Self::load_initial_db(&config.db_path);
+        let (update_tx, _) = tokio::sync::broadcast::channel(100);
         Self {
             database,
             last_modified,
@@ -132,10 +134,12 @@ impl AppState {
             slogan_override: config.slogan.clone(),
             db_path: config.db_path.clone(),
             avatar_path: config.avatar_path.clone(),
+            update_tx,
         }
     }
 
     pub fn with_database(config: &ServerConfig, database: LibraryDatabase) -> Self {
+        let (update_tx, _) = tokio::sync::broadcast::channel(100);
         Self {
             database,
             last_modified: SystemTime::now(),
@@ -145,7 +149,13 @@ impl AppState {
             slogan_override: config.slogan.clone(),
             db_path: config.db_path.clone(),
             avatar_path: config.avatar_path.clone(),
+            update_tx,
         }
+    }
+
+    /// Broadcasts an update notification to all connected SSE clients.
+    pub fn broadcast_update(&self) {
+        let _ = self.update_tx.send(());
     }
 
     /// Verifies if a request is authorized with admin privileges via:

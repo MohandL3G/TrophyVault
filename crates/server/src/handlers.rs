@@ -1,13 +1,19 @@
 use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::hash_map::DefaultHasher;
+use std::convert::Infallible;
 use std::hash::{Hash, Hasher};
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use trophyvault_core::generator::{
     generate_overall_passport_svg, generate_single_game_passport_svg, PassportOptions,
     PassportTheme,
@@ -17,9 +23,11 @@ use trophyvault_core::storage::{database_to_achievements_data, LibraryDatabase};
 use crate::badge::generate_badge_svg;
 use crate::state::{current_timestamp, SharedState};
 
-/// Payload for /api/sync endpoint.
-#[derive(Debug, Deserialize)]
-pub struct SyncQuery {}
+/// Query parameters for /api/sync endpoint.
+#[derive(Debug, Default, Deserialize)]
+pub struct SyncQuery {
+    pub mode: Option<String>,
+}
 
 /// Query parameters for /api/passport.svg.
 #[derive(Debug, Default, Deserialize)]
@@ -125,8 +133,10 @@ pub async fn health_handler() -> Json<serde_json::Value> {
 ///
 /// Synchronizes library database from desktop app to web server.
 /// Authenticated via Bearer token.
+/// Supports mode=update (default, incremental upsert) and mode=full (snapshot overwrite).
 pub async fn sync_handler(
     State(state): State<SharedState>,
+    Query(query): Query<SyncQuery>,
     headers: HeaderMap,
     Json(payload): Json<LibraryDatabase>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
@@ -154,10 +164,36 @@ pub async fn sync_handler(
         ));
     }
 
+    let is_full_sync = query
+        .mode
+        .as_deref()
+        .map(|m| m.eq_ignore_ascii_case("full"))
+        .unwrap_or(false);
+
+    let final_db = if is_full_sync {
+        let mut db = payload;
+        db.last_updated = current_timestamp();
+        db
+    } else {
+        // Incremental upsert: merge payload.games into existing database.games
+        let current_state = state.read().await;
+        let mut db = current_state.database.clone();
+        for (game_id, entry) in payload.games {
+            db.games.insert(game_id, entry);
+        }
+        db.preferences = payload.preferences;
+        if !payload.manual_games.is_empty() {
+            db.manual_games = payload.manual_games;
+        }
+        db.version = payload.version;
+        db.last_updated = current_timestamp();
+        db
+    };
+
     // 2. Persist database atomically to disk
     {
         let current_state = state.read().await;
-        if let Err(e) = current_state.save_db_atomic(&payload) {
+        if let Err(e) = current_state.save_db_atomic(&final_db) {
             tracing::error!("Failed to atomically save database: {}", e);
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -170,18 +206,22 @@ pub async fn sync_handler(
     }
 
     // 3. Update in-memory cached state
-    let games_count = payload.games.len();
+    let games_count = final_db.games.len();
     let synced_at = current_timestamp();
 
     {
         let mut write_guard = state.write().await;
-        write_guard.database = payload;
+        write_guard.database = final_db;
         write_guard.last_modified = std::time::SystemTime::now();
     }
 
+    // 4. Broadcast update to connected clients
+    state.read().await.broadcast_update();
+
     tracing::info!(
-        "Successfully synced library database ({} games) at {}",
+        "Successfully synced library database ({} games, mode: {}) at {}",
         games_count,
+        if is_full_sync { "full" } else { "update" },
         synced_at
     );
 
@@ -194,6 +234,85 @@ pub async fn sync_handler(
         })),
     )
         .into_response())
+}
+
+/// POST /api/purge
+///
+/// Purges all games from the remote database while preserving preferences.
+/// Authenticated via Bearer token or X-Admin-Password.
+pub async fn purge_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let current_state = state.read().await;
+    if !current_state.is_admin_authorized(&headers) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "status": "error",
+                "message": "Unauthorized: Invalid or missing admin credentials"
+            })),
+        ));
+    }
+
+    let mut db_to_save = current_state.database.clone();
+    drop(current_state);
+
+    db_to_save.games.clear();
+    db_to_save.last_updated = current_timestamp();
+
+    // Persist to disk atomically
+    {
+        let current_state = state.read().await;
+        if let Err(e) = current_state.save_db_atomic(&db_to_save) {
+            tracing::error!("Failed to atomically save purged database: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "status": "error",
+                    "message": format!("Disk write failure: {}", e)
+                })),
+            ));
+        }
+    }
+
+    // Update in-memory state
+    {
+        let mut write_guard = state.write().await;
+        write_guard.database = db_to_save;
+        write_guard.last_modified = std::time::SystemTime::now();
+    }
+
+    // Broadcast update
+    state.read().await.broadcast_update();
+
+    tracing::info!("Successfully purged library database games");
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "status": "ok",
+            "message": "Database games purged successfully",
+            "games_count": 0,
+            "purged_at": current_timestamp()
+        })),
+    )
+        .into_response())
+}
+
+/// GET /api/events
+///
+/// Server-Sent Events (SSE) endpoint broadcasting database updates to connected web clients.
+pub async fn events_handler(
+    State(state): State<SharedState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.read().await.update_tx.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|res| match res {
+        Ok(()) => Some(Ok(Event::default().event("update").data("refresh"))),
+        Err(_) => None,
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 /// GET /api/passport.svg

@@ -246,29 +246,6 @@ body.hud-body {
   display: block;
 }
 
-.hud-avatar-edit-badge {
-  position: absolute;
-  bottom: -2px;
-  right: -2px;
-  width: 14px;
-  height: 14px;
-  background: var(--bg-primary);
-  border: 1px solid var(--cyan);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--cyan);
-  opacity: 0.7;
-  transition: opacity 0.2s ease;
-}
-
-.hud-persona-avatar:hover .hud-avatar-edit-badge {
-  opacity: 1;
-  background: var(--cyan);
-  color: #000;
-}
-
 .hud-persona-meta {
   display: flex;
   flex-direction: column;

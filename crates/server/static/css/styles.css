@@ -305,6 +305,25 @@ body.hud-body {
   transform: translateY(-1px);
 }
 
+.hud-btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: var(--text-main);
+  padding: 8px 18px;
+}
+
+.hud-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.45);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.hud-btn-secondary:active {
+  transform: translateY(0);
+  background: rgba(255, 255, 255, 0.1);
+}
+
 /* Main Content */
 .hud-main {
   flex: 1;
@@ -1981,4 +2000,14 @@ body.hud-body {
   background: #ff3366;
   color: #fff;
   box-shadow: 0 0 12px rgba(255, 51, 102, 0.4);
+}
+
+.hud-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 16px;
+  margin-top: 20px;
+  border-top: 1px solid var(--border-subtle);
 }

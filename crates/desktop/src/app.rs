@@ -173,14 +173,14 @@ impl PassportApp {
             show_custom_id_popup: false,
 
             mode: PassportMode::Overall,
-            selected_game_name: "Bloodborne (PC Recomp)".to_string(),
+            selected_game_name: "Bloodborne".to_string(),
             game_search_query: String::new(),
             username,
             title_line,
             theme,
             output_path: default_output,
 
-            new_game_name: "Bloodborne (PC Recomp)".to_string(),
+            new_game_name: "Bloodborne".to_string(),
             new_game_dir: r"C:\Games\Decomps\Bloodborne\user".to_string(),
             new_game_appid: "2485153835".to_string(),
             new_game_parser: "bbport".to_string(),

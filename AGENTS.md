@@ -33,12 +33,17 @@ The project is structured as a Cargo workspace with three primary crates:
 
 When developing features, bug fixes, or enhancements:
 
-1. **Issue First**: Every task must have an associated GitHub Issue. Check existing open issues (`gh issue list`). If none exists, create one (`gh issue create`).
+1. **Issue Creation & Assignment Mandate**:
+   - Every task must have an associated GitHub Issue. Check existing open issues (`gh issue list`).
+   - When creating an issue (`gh issue create`), **ALWAYS**:
+     - Assign it to the author (`MohandL3G`) using `--assignee "@me"`.
+     - Assign the appropriate classification label/tag (e.g. `--label "enhancement"` or `--label "bug"`, `--label "documentation"`).
 2. **Feature Branch**: Create a dedicated feature branch for the work (e.g., `git checkout -b <issue-number>-<short-description>`). Never commit feature work directly to `main`.
 3. **Targeted Implementation**: Keep changes scoped strictly to the task. Maintain clean code and formatting.
 4. **Pull Request Mandate**:
    - Push the branch and create a Pull Request using `gh pr create`.
    - **MANDATORY**: Always assign `@me` (`MohandL3G`) to all PRs using `--assignee "@me"`.
+   - Always assign appropriate labels/tags where applicable (e.g. `--label "enhancement"` or `--label "bug"`).
    - Reference the issue in the PR description (e.g., `Closes #<issue-id>`).
 5. **Merge & Deployment**:
    - Merge verified PRs into `main` using squash merge (`gh pr merge <PR_NUM> --squash --delete-branch`).

@@ -137,6 +137,24 @@ body.hud-body {
   display: flex;
   align-items: center;
   gap: 14px;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.hud-header-brand:hover {
+  opacity: 0.95;
+}
+
+.hud-header-brand:hover .hud-logo-badge {
+  border-color: var(--cyan);
+  box-shadow: 0 0 24px var(--cyan-glow);
+  transform: translateY(-1px);
+}
+
+.hud-header-brand:hover .hud-title {
+  text-shadow: 0 0 14px rgba(255, 255, 255, 0.45);
 }
 
 .hud-logo-badge {
@@ -150,6 +168,7 @@ body.hud-body {
   justify-content: center;
   color: var(--cyan);
   box-shadow: 0 0 16px var(--cyan-glow);
+  transition: all 0.2s ease;
 }
 
 .hud-title-wrap {

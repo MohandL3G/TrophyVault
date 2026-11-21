@@ -16,7 +16,7 @@ pub fn current_timestamp() -> u64 {
 pub struct ServerConfig {
     pub port: u16,
     pub api_key: String,
-    pub admin_password: Option<String>,
+    pub admin_password: String,
     pub username: Option<String>,
     pub slogan: Option<String>,
     pub db_path: PathBuf,
@@ -34,10 +34,12 @@ impl ServerConfig {
         let api_key = std::env::var("API_KEY")
             .unwrap_or_else(|_| "trophyvault-dev-token".to_string());
 
-        let admin_password = std::env::var("ADMIN_PASSWORD")
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+        let admin_password = match std::env::var("ADMIN_PASSWORD") {
+            Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+            _ => {
+                panic!("FATAL: ADMIN_PASSWORD environment variable is required and must not be empty. TrophyVault server requires an Admin Password to run.");
+            }
+        };
 
         let username = std::env::var("PROFILE_USERNAME")
             .or_else(|_| std::env::var("USERNAME"))
@@ -111,7 +113,7 @@ pub struct AppState {
     pub database: LibraryDatabase,
     pub last_modified: SystemTime,
     pub api_key: String,
-    pub admin_password: Option<String>,
+    pub admin_password: String,
     pub username_override: Option<String>,
     pub slogan_override: Option<String>,
     pub db_path: PathBuf,
@@ -158,21 +160,17 @@ impl AppState {
         let _ = self.update_tx.send(());
     }
 
-    /// Verifies if a request is authorized with admin privileges via:
-    /// 1. Bearer token matching `api_key` or `admin_password`.
-    /// 2. Header `X-Admin-Password` matching `admin_password` or `api_key`.
-    pub fn is_admin_authorized(&self, headers: &axum::http::HeaderMap) -> bool {
+    /// Verifies if a request is authorized with admin password via:
+    /// 1. Bearer token matching `admin_password`.
+    /// 2. Header `X-Admin-Password` matching `admin_password`.
+    /// CRITICAL: It must NOT accept api_key!
+    pub fn is_admin_password_authorized(&self, headers: &axum::http::HeaderMap) -> bool {
         // 1. Check Bearer token
         if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
             if auth_header.starts_with("Bearer ") {
                 let token = auth_header.trim_start_matches("Bearer ").trim();
-                if token == self.api_key {
+                if token == self.admin_password {
                     return true;
-                }
-                if let Some(ref admin_pass) = self.admin_password {
-                    if token == admin_pass {
-                        return true;
-                    }
                 }
             }
         }
@@ -184,12 +182,36 @@ impl AppState {
             .and_then(|v| v.to_str().ok())
         {
             let pass = admin_hdr.trim();
-            if let Some(ref admin_pass) = self.admin_password {
-                if pass == admin_pass {
+            if pass == self.admin_password {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Verifies if a request is authorized with admin privileges via:
+    /// 1. Bearer token matching `api_key` or `admin_password`.
+    /// 2. Header `X-Admin-Password` matching `admin_password` or `api_key`.
+    pub fn is_admin_authorized(&self, headers: &axum::http::HeaderMap) -> bool {
+        // 1. Check Bearer token
+        if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+            if auth_header.starts_with("Bearer ") {
+                let token = auth_header.trim_start_matches("Bearer ").trim();
+                if token == self.api_key || token == self.admin_password {
                     return true;
                 }
             }
-            if pass == self.api_key {
+        }
+
+        // 2. Check X-Admin-Password header
+        if let Some(admin_hdr) = headers
+            .get("X-Admin-Password")
+            .or_else(|| headers.get("x-admin-password"))
+            .and_then(|v| v.to_str().ok())
+        {
+            let pass = admin_hdr.trim();
+            if pass == self.admin_password || pass == self.api_key {
                 return true;
             }
         }

@@ -88,7 +88,7 @@ fn setup_test_app() -> (axum::Router, tempfile::TempDir, String) {
     let config = ServerConfig {
         port: 5050,
         api_key: api_key.clone(),
-        admin_password: Some("admin-pass-123".to_string()),
+        admin_password: "admin-pass-123".to_string(),
         username: None,
         slogan: None,
         db_path,
@@ -156,7 +156,7 @@ async fn test_stats_endpoint_with_env_overrides() {
     let config = ServerConfig {
         port: 5050,
         api_key: "key".to_string(),
-        admin_password: Some("adminpass".to_string()),
+        admin_password: "admin-pass-123".to_string(),
         username: Some("CustomOverriddenUser".to_string()),
         slogan: Some("CYBER_HUNTER".to_string()),
         db_path: temp_dir.path().join("db.json"),
@@ -223,11 +223,11 @@ async fn test_avatar_endpoints_crud_and_auth() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 
-    // 6. DELETE /api/avatar authorized with Bearer token -> 200
+    // 6. DELETE /api/avatar authorized with Bearer token (admin password) -> 200
     let req = Request::builder()
         .uri("/api/avatar")
         .method("DELETE")
-        .header("Authorization", "Bearer test-secret-token")
+        .header("Authorization", "Bearer admin-pass-123")
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -429,7 +429,7 @@ async fn test_static_index_serving() {
     let config = ServerConfig {
         port: 5050,
         api_key: "key".to_string(),
-        admin_password: None,
+        admin_password: "admin-pass-123".to_string(),
         username: None,
         slogan: None,
         db_path: temp_dir.path().join("db.json"),
@@ -691,4 +691,62 @@ async fn test_events_endpoint_sse() {
         res.headers().get(header::CONTENT_TYPE).unwrap(),
         "text/event-stream"
     );
+}
+
+#[tokio::test]
+async fn test_avatar_upload_and_delete_with_admin_password() {
+    let (app, temp_dir, _key) = setup_test_app();
+    let fake_png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01];
+
+    // 1. Upload PNG bytes with X-Admin-Password succeeds
+    let req = Request::builder()
+        .uri("/api/avatar")
+        .method("POST")
+        .header("X-Admin-Password", "admin-pass-123")
+        .body(Body::from(fake_png.clone()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(temp_dir.path().join("avatar.png").exists());
+
+    // 2. GET /api/avatar returns 200
+    let req = Request::builder().uri("/api/avatar").method("GET").body(Body::empty()).unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
+    let downloaded = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(downloaded.to_vec(), fake_png);
+
+    // 3. DELETE /api/avatar succeeds
+    let req = Request::builder()
+        .uri("/api/avatar")
+        .method("DELETE")
+        .header("X-Admin-Password", "admin-pass-123")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(!temp_dir.path().join("avatar.png").exists());
+}
+
+#[tokio::test]
+async fn test_avatar_upload_fails_with_api_key_only() {
+    let (app, temp_dir, api_key) = setup_test_app();
+    let fake_png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01];
+
+    // Attempting avatar upload with Bearer <api_key> returns 401 UNAUTHORIZED
+    let req = Request::builder()
+        .uri("/api/avatar")
+        .method("POST")
+        .header(header::AUTHORIZATION, format!("Bearer {}", api_key))
+        .body(Body::from(fake_png))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert!(!temp_dir.path().join("avatar.png").exists());
+
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(body["status"], "error");
+    assert_eq!(body["message"], "Unauthorized: Invalid or missing admin password");
 }

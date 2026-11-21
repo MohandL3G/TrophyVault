@@ -531,7 +531,7 @@ pub async fn upload_avatar_handler(
     body: axum::body::Bytes,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let current_state = state.read().await;
-    if !current_state.is_admin_authorized(&headers) {
+    if !current_state.is_admin_password_authorized(&headers) {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(json!({
@@ -598,7 +598,7 @@ pub async fn delete_avatar_handler(
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let current_state = state.read().await;
-    if !current_state.is_admin_authorized(&headers) {
+    if !current_state.is_admin_password_authorized(&headers) {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(json!({

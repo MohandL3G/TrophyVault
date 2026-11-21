@@ -119,6 +119,9 @@ class TrophyVaultApp {
 
       // Toast
       toastContainer: document.getElementById('toastContainer'),
+
+      // Scroll To Top
+      scrollToTopBtn: document.getElementById('scrollToTopBtn'),
     };
   }
 
@@ -387,6 +390,18 @@ class TrophyVaultApp {
         }
       });
     });
+
+    // Scroll To Top Button
+    const scrollToTopBtn = this.dom.scrollToTopBtn || document.getElementById('scrollToTopBtn');
+    if (scrollToTopBtn) {
+      window.addEventListener('scroll', () => {
+        scrollToTopBtn.classList.toggle('is-visible', window.scrollY > 250);
+      }, { passive: true });
+
+      scrollToTopBtn.addEventListener('click', () => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    }
   }
 
   /**
@@ -1117,7 +1132,7 @@ class TrophyVaultApp {
   async saveAvatar() {
     const password = this.dom.avatarPasswordInput?.value.trim();
     if (!password) {
-      this.showToast('Please enter your Admin Password or API Key', 'error');
+      this.showToast('Please enter your Admin Password', 'error');
       this.dom.avatarPasswordInput?.focus();
       return;
     }
@@ -1181,7 +1196,7 @@ class TrophyVaultApp {
   async deleteAvatar() {
     const password = this.dom.avatarPasswordInput?.value.trim();
     if (!password) {
-      this.showToast('Please enter your Admin Password or API Key to remove avatar', 'error');
+      this.showToast('Please enter your Admin Password', 'error');
       this.dom.avatarPasswordInput?.focus();
       return;
     }

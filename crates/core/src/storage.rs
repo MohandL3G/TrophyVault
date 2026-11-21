@@ -13,6 +13,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub use crate::db::*;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryDatabase {
     pub version: u32,

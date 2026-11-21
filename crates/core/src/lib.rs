@@ -5,6 +5,7 @@
 
 pub mod bloodborne;
 pub mod data;
+pub mod db;
 pub mod generator;
 pub mod icons;
 pub mod steam;

@@ -11,7 +11,7 @@ services:
       - ADMIN_PASSWORD=trophyvault-admin-password-change-me
       - USERNAME=MohandL3G
       - SLOGAN=HUNTER
-      - DATABASE_PATH=/data/library_database.json
+      - DATABASE_PATH=/data/trophyvault.db
       - AVATAR_PATH=/data/avatar.png
     volumes:
       - trophyvault-data:/data

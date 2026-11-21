@@ -455,6 +455,47 @@ pub async fn stats_handler(State(state): State<SharedState>) -> Json<LibraryStat
 /// Returns JSON array of games with playtime, completion %, unlocked trophies.
 pub async fn games_handler(State(state): State<SharedState>) -> Json<Vec<GameSummaryItem>> {
     let current_state = state.read().await;
+
+    // 1. Query directly from SQLite
+    if let Ok(conn) = current_state.conn.lock() {
+        let stmt = conn.prepare(
+            "SELECT id, name, platform, appid, unlocked, total, pct, platinum, playtime_minutes, last_played, source, last_scanned \
+             FROM games \
+             ORDER BY playtime_minutes DESC, pct DESC, name ASC;",
+        );
+        if let Ok(mut stmt) = stmt {
+            let rows = stmt.query_map([], |row| {
+                let playtime_minutes = row.get::<_, i64>(8)? as u32;
+                Ok(GameSummaryItem {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    platform: row.get(2)?,
+                    appid: row.get(3)?,
+                    unlocked: row.get::<_, i64>(4)? as u32,
+                    total: row.get::<_, i64>(5)? as u32,
+                    pct: row.get::<_, i64>(6)? as u32,
+                    platinum: row.get::<_, i64>(7)? != 0,
+                    playtime_minutes,
+                    playtime_formatted: format_playtime(playtime_minutes as u64),
+                    last_played: row.get::<_, Option<i64>>(9)?.map(|v| v as u64),
+                    source: row.get(10)?,
+                    last_scanned: row.get::<_, i64>(11)? as u64,
+                })
+            });
+
+            if let Ok(mapped) = rows {
+                let mut games = Vec::new();
+                for game_res in mapped {
+                    if let Ok(game) = game_res {
+                        games.push(game);
+                    }
+                }
+                return Json(games);
+            }
+        }
+    }
+
+    // 2. Fallback to in-memory cached state
     let db = &current_state.database;
 
     let mut games: Vec<GameSummaryItem> = db

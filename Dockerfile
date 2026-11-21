@@ -44,6 +44,6 @@ EXPOSE 5050
 
 # Default environment variables
 ENV PORT=5050 \
-    DATABASE_PATH=/data/library_database.json
+    DATABASE_PATH=/data/trophyvault.db
 
 ENTRYPOINT ["/usr/local/bin/trophyvault-server"]

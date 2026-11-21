@@ -1,7 +1,11 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tokio::sync::RwLock;
+use trophyvault_core::db::{
+    is_db_empty, load_library_database_from_sqlite, migrate_json_to_sqlite_if_needed,
+    open_or_create_db, purge_sqlite_database, save_library_database_to_sqlite,
+};
 use trophyvault_core::storage::{DatabasePreferences, LibraryDatabase};
 
 /// Returns the current Unix timestamp in seconds.
@@ -10,6 +14,51 @@ pub fn current_timestamp() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Resolves a DB path to its SQLite `.db` path if it has `.json` extension.
+pub fn resolve_sqlite_path(path: &Path) -> PathBuf {
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
+    {
+        path.with_extension("db")
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Finds a potential JSON database file to migrate from if SQLite database is empty/new.
+pub fn find_migration_json_candidate(original_path: &Path, sqlite_path: &Path) -> Option<PathBuf> {
+    if original_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
+        && original_path.exists()
+    {
+        return Some(original_path.to_path_buf());
+    }
+
+    let candidate = sqlite_path.with_extension("json");
+    if candidate.exists() && candidate != sqlite_path {
+        return Some(candidate);
+    }
+
+    if let Some(parent) = sqlite_path.parent() {
+        let parent_json = if parent.as_os_str().is_empty() {
+            PathBuf::from("library_database.json")
+        } else {
+            parent.join("library_database.json")
+        };
+        if parent_json.exists() && parent_json != sqlite_path {
+            return Some(parent_json);
+        }
+    }
+
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -53,17 +102,67 @@ impl ServerConfig {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
-        let db_path = match std::env::var("DATABASE_PATH") {
-            Ok(p) => PathBuf::from(p),
+        let (db_path, candidate_json) = match std::env::var("DATABASE_PATH") {
+            Ok(p) => {
+                let raw_path = PathBuf::from(p);
+                if raw_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.eq_ignore_ascii_case("json"))
+                    .unwrap_or(false)
+                {
+                    let sqlite_path = raw_path.with_extension("db");
+                    let json_opt = if raw_path.exists() {
+                        Some(raw_path)
+                    } else {
+                        None
+                    };
+                    (sqlite_path, json_opt)
+                } else {
+                    let json_candidate = raw_path.with_extension("json");
+                    let json_opt = if json_candidate.exists() {
+                        Some(json_candidate)
+                    } else if let Some(parent) = raw_path.parent() {
+                        let parent_json = if parent.as_os_str().is_empty() {
+                            PathBuf::from("library_database.json")
+                        } else {
+                            parent.join("library_database.json")
+                        };
+                        if parent_json.exists() {
+                            Some(parent_json)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    (raw_path, json_opt)
+                }
+            }
             Err(_) => {
                 let default_container_data = PathBuf::from("/data");
                 if default_container_data.exists() && default_container_data.is_dir() {
-                    default_container_data.join("library_database.json")
+                    let db = default_container_data.join("trophyvault.db");
+                    let json = default_container_data.join("library_database.json");
+                    (db, if json.exists() { Some(json) } else { None })
                 } else {
-                    PathBuf::from("./data/library_database.json")
+                    let db = PathBuf::from("./data/trophyvault.db");
+                    let json = PathBuf::from("./data/library_database.json");
+                    (db, if json.exists() { Some(json) } else { None })
                 }
             }
         };
+
+        if let Some(ref json_path) = candidate_json {
+            if let Err(e) = migrate_json_to_sqlite_if_needed(json_path, &db_path) {
+                tracing::warn!(
+                    "Migration from JSON ({}) to SQLite ({}) failed: {}",
+                    json_path.display(),
+                    db_path.display(),
+                    e
+                );
+            }
+        }
 
         let avatar_path = match std::env::var("AVATAR_PATH") {
             Ok(p) => PathBuf::from(p),
@@ -119,14 +218,30 @@ pub struct AppState {
     pub db_path: PathBuf,
     pub avatar_path: PathBuf,
     pub update_tx: tokio::sync::broadcast::Sender<()>,
+    pub conn: Arc<Mutex<rusqlite::Connection>>,
 }
 
 pub type SharedState = Arc<RwLock<AppState>>;
 
 impl AppState {
     pub fn new(config: &ServerConfig) -> Self {
-        let (database, last_modified) = Self::load_initial_db(&config.db_path);
+        let db_path = resolve_sqlite_path(&config.db_path);
+        if let Some(json_path) = find_migration_json_candidate(&config.db_path, &db_path) {
+            if let Err(e) = migrate_json_to_sqlite_if_needed(&json_path, &db_path) {
+                tracing::warn!(
+                    "Migration from JSON ({}) to SQLite ({}) failed: {}",
+                    json_path.display(),
+                    db_path.display(),
+                    e
+                );
+            }
+        }
+
+        let mut conn = open_or_create_db(&db_path)
+            .unwrap_or_else(|e| panic!("Failed to open or create SQLite DB at {}: {}", db_path.display(), e));
+        let (database, last_modified) = Self::load_initial_db(&mut conn, &db_path);
         let (update_tx, _) = tokio::sync::broadcast::channel(100);
+
         Self {
             database,
             last_modified,
@@ -134,14 +249,20 @@ impl AppState {
             admin_password: config.admin_password.clone(),
             username_override: config.username.clone(),
             slogan_override: config.slogan.clone(),
-            db_path: config.db_path.clone(),
+            db_path,
             avatar_path: config.avatar_path.clone(),
             update_tx,
+            conn: Arc::new(Mutex::new(conn)),
         }
     }
 
     pub fn with_database(config: &ServerConfig, database: LibraryDatabase) -> Self {
         let (update_tx, _) = tokio::sync::broadcast::channel(100);
+        let db_path = resolve_sqlite_path(&config.db_path);
+        let mut conn = open_or_create_db(&db_path)
+            .unwrap_or_else(|e| panic!("Failed to open or create SQLite DB at {}: {}", db_path.display(), e));
+        let _ = save_library_database_to_sqlite(&mut conn, &database);
+
         Self {
             database,
             last_modified: SystemTime::now(),
@@ -149,9 +270,10 @@ impl AppState {
             admin_password: config.admin_password.clone(),
             username_override: config.username.clone(),
             slogan_override: config.slogan.clone(),
-            db_path: config.db_path.clone(),
+            db_path,
             avatar_path: config.avatar_path.clone(),
             update_tx,
+            conn: Arc::new(Mutex::new(conn)),
         }
     }
 
@@ -219,30 +341,29 @@ impl AppState {
         false
     }
 
-    fn load_initial_db(path: &PathBuf) -> (LibraryDatabase, SystemTime) {
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                if let Ok(db) = serde_json::from_str::<LibraryDatabase>(&content) {
-                    tracing::info!(
-                        "Loaded existing library database from {} ({} games)",
-                        path.display(),
-                        db.games.len()
-                    );
-                    let mtime = std::fs::metadata(path)
-                        .and_then(|m| m.modified())
-                        .unwrap_or_else(|_| SystemTime::now());
-                    return (db, mtime);
-                } else {
-                    tracing::warn!(
-                        "Failed to deserialize database at {}, initializing default",
-                        path.display()
-                    );
-                }
+    fn load_initial_db(conn: &mut rusqlite::Connection, path: &Path) -> (LibraryDatabase, SystemTime) {
+        let is_empty = is_db_empty(conn).unwrap_or(true);
+        if !is_empty {
+            if let Ok(db) = load_library_database_from_sqlite(conn) {
+                tracing::info!(
+                    "Loaded existing library database from SQLite at {} ({} games)",
+                    path.display(),
+                    db.games.len()
+                );
+                let mtime = std::fs::metadata(path)
+                    .and_then(|m| m.modified())
+                    .unwrap_or_else(|_| SystemTime::now());
+                return (db, mtime);
+            } else {
+                tracing::warn!(
+                    "Failed to deserialize SQLite database at {}, initializing default",
+                    path.display()
+                );
             }
         }
 
         tracing::info!(
-            "No existing database found at {}, starting with default",
+            "No existing data in SQLite database at {}, starting with default",
             path.display()
         );
         let default_db = LibraryDatabase {
@@ -252,41 +373,29 @@ impl AppState {
             manual_games: Vec::new(),
             games: std::collections::HashMap::new(),
         };
+        let _ = save_library_database_to_sqlite(conn, &default_db);
         (default_db, SystemTime::now())
     }
 
-    /// Atomically writes the database to disk using a temp file and rename.
+    /// Atomically persists the database snapshot to SQLite within a transaction.
     pub fn save_db_atomic(&self, db: &LibraryDatabase) -> Result<(), std::io::Error> {
-        let json_str = serde_json::to_string_pretty(db)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        save_library_database_to_sqlite(&mut *conn, db)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        Ok(())
+    }
 
-        if let Some(parent) = self.db_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
-        }
-
-        let temp_filename = format!(
-            ".{}.tmp.{}",
-            self.db_path
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or("database"),
-            std::process::id()
-        );
-        let temp_path = match self.db_path.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => parent.join(temp_filename),
-            _ => PathBuf::from(temp_filename),
-        };
-
-        use std::io::Write;
-        {
-            let mut file = std::fs::File::create(&temp_path)?;
-            file.write_all(json_str.as_bytes())?;
-            file.sync_all()?;
-        }
-
-        std::fs::rename(&temp_path, &self.db_path)?;
+    /// Purges all games from the SQLite database within a transaction.
+    pub fn purge_db(&self) -> Result<(), std::io::Error> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        purge_sqlite_database(&mut *conn)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
         Ok(())
     }
 }

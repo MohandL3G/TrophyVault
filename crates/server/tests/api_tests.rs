@@ -80,7 +80,7 @@ fn create_test_db() -> LibraryDatabase {
 
 fn setup_test_app() -> (axum::Router, tempfile::TempDir, String) {
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
-    let db_path = temp_dir.path().join("test_db.json");
+    let db_path = temp_dir.path().join("test_db.db");
     let static_dir = temp_dir.path().join("static");
     std::fs::create_dir_all(&static_dir).unwrap();
 
@@ -159,7 +159,7 @@ async fn test_stats_endpoint_with_env_overrides() {
         admin_password: "admin-pass-123".to_string(),
         username: Some("CustomOverriddenUser".to_string()),
         slogan: Some("CYBER_HUNTER".to_string()),
-        db_path: temp_dir.path().join("db.json"),
+        db_path: temp_dir.path().join("db.db"),
         avatar_path: temp_dir.path().join("avatar.png"),
         static_dir: static_dir.clone(),
     };
@@ -399,12 +399,13 @@ async fn test_sync_success_and_state_update() {
     assert_eq!(resp["status"], "ok");
     assert_eq!(resp["games_count"], 3);
 
-    // Verify disk persistence
-    let db_path = temp.path().join("test_db.json");
+    // Verify disk persistence in SQLite
+    let db_path = temp.path().join("test_db.db");
     assert!(db_path.exists());
-    let saved_content = std::fs::read_to_string(&db_path).unwrap();
-    assert!(saved_content.contains("UpdatedHunter"));
-    assert!(saved_content.contains("Elden Ring"));
+    let conn = trophyvault_core::db::open_or_create_db(&db_path).unwrap();
+    let disk_db = trophyvault_core::db::load_library_database_from_sqlite(&conn).unwrap();
+    assert_eq!(disk_db.preferences.username, "UpdatedHunter");
+    assert!(disk_db.games.contains_key("eldenring"));
 
     // Verify GET /api/stats now shows 3 games and UpdatedHunter
     let stats_req = Request::builder()
@@ -432,7 +433,7 @@ async fn test_static_index_serving() {
         admin_password: "admin-pass-123".to_string(),
         username: None,
         slogan: None,
-        db_path: temp_dir.path().join("db.json"),
+        db_path: temp_dir.path().join("db.db"),
         avatar_path: temp_dir.path().join("avatar.png"),
         static_dir: static_dir.clone(),
     };
@@ -668,10 +669,11 @@ async fn test_purge_endpoint_auth_and_clearing() {
     assert_eq!(stats["total_games"], 0);
     assert_eq!(stats["perfect_games"], 0);
 
-    // 6. Verify disk persistence
-    let db_path = temp.path().join("test_db.json");
-    let content = std::fs::read_to_string(&db_path).unwrap();
-    let disk_db: LibraryDatabase = serde_json::from_str(&content).unwrap();
+    // 6. Verify disk persistence in SQLite
+    let db_path = temp.path().join("test_db.db");
+    assert!(db_path.exists());
+    let conn = trophyvault_core::db::open_or_create_db(&db_path).unwrap();
+    let disk_db = trophyvault_core::db::load_library_database_from_sqlite(&conn).unwrap();
     assert!(disk_db.games.is_empty());
 }
 
@@ -750,3 +752,94 @@ async fn test_avatar_upload_fails_with_api_key_only() {
     assert_eq!(body["status"], "error");
     assert_eq!(body["message"], "Unauthorized: Invalid or missing admin password");
 }
+
+#[tokio::test]
+async fn test_server_migrates_existing_json_to_sqlite_on_startup() {
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let json_path = temp_dir.path().join("library_database.json");
+    let db_path = temp_dir.path().join("trophyvault.db");
+    let static_dir = temp_dir.path().join("static");
+    std::fs::create_dir_all(&static_dir).unwrap();
+
+    // 1. Create a legacy JSON database file
+    let sample_db = create_test_db();
+    let json_str = serde_json::to_string_pretty(&sample_db).unwrap();
+    std::fs::write(&json_path, json_str).unwrap();
+
+    // 2. Initialize AppState using AppState::new (which executes auto-migration)
+    let config = ServerConfig {
+        port: 5050,
+        api_key: "test-token".to_string(),
+        admin_password: "admin-pass-123".to_string(),
+        username: None,
+        slogan: None,
+        db_path: db_path.clone(),
+        avatar_path: temp_dir.path().join("avatar.png"),
+        static_dir: static_dir.clone(),
+    };
+
+    let state = Arc::new(RwLock::new(AppState::new(&config)));
+    let app = create_app(state, static_dir);
+
+    // 3. Verify SQLite database was created
+    assert!(db_path.exists());
+
+    // 4. Verify /api/games returns migrated games querying through SQLite
+    let req = Request::builder()
+        .uri("/api/games")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let games: Vec<serde_json::Value> = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(games.len(), 2);
+    assert_eq!(games[0]["id"], "bloodborne");
+    assert_eq!(games[0]["playtime_minutes"], 5400);
+
+    // 5. Verify /api/stats reflects the migrated games and preferences
+    let stats_req = Request::builder()
+        .uri("/api/stats")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let stats_res = app.oneshot(stats_req).await.unwrap();
+    assert_eq!(stats_res.status(), StatusCode::OK);
+
+    let stats_bytes = stats_res.into_body().collect().await.unwrap().to_bytes();
+    let stats: serde_json::Value = serde_json::from_slice(&stats_bytes).unwrap();
+    assert_eq!(stats["username"], "HunterOfYharnam");
+    assert_eq!(stats["total_games"], 2);
+    assert_eq!(stats["perfect_games"], 1);
+
+    // 6. Direct query on SQLite table to verify trophies table persistence
+    let conn = trophyvault_core::db::open_or_create_db(&db_path).unwrap();
+    let trophy_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM trophies", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(trophy_count, 1);
+}
+
+#[tokio::test]
+async fn test_server_config_path_resolution_and_migration() {
+    use trophyvault_server::state::resolve_sqlite_path;
+    use std::path::Path;
+
+    assert_eq!(
+        resolve_sqlite_path(Path::new("/data/library_database.json")),
+        Path::new("/data/library_database.db")
+    );
+    assert_eq!(
+        resolve_sqlite_path(Path::new("/data/trophyvault.db")),
+        Path::new("/data/trophyvault.db")
+    );
+    assert_eq!(
+        resolve_sqlite_path(Path::new("./data/trophyvault.db")),
+        Path::new("./data/trophyvault.db")
+    );
+}
+

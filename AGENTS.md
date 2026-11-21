@@ -1,39 +1,47 @@
-# Agent Working Guide: Achievements Passport Desktop
+# Agent Working Guide: TrophyVault
 
-This repository contains a desktop application written in **Rust** that generates futuristic, sci-fi HUD achievement passport cards (inspired by the Palworld passport layout) from the [Achievements](https://github.com/PSerban93/Achievements) desktop app data.
+This repository contains **TrophyVault**, a multi-component Rust workspace combining a futuristic desktop application and a web showcase server for achievements, trophies, and passport card generation.
 
 ## Architecture & Technology Stack
 
-- **GUI Framework**: `eframe` / `egui` (0.29) with Glow OpenGL renderer (avoiding DirectX 12 game overlay hooks).
-- **Graphic Rendering**: `resvg` (0.44), `usvg` (0.44), and `tiny-skia` (0.11). The generator constructs vector SVG documents with HUD chamfered geometry, gradients, and custom icons, then rasterizes to high-resolution PNG (1200 × 850).
-- **Data Integration**:
-  - Automatically locates `%APPDATA%\Achievements\` on Windows (and `~/.config/Achievements/` on Linux).
-  - Reads `dashboard-summary.json` for verified achievement counts, completion rates, and platform sources.
-  - Reads `preferences.json` and Steam's `loginusers.vdf` to resolve the active gamer tag (`PersonaName`).
-- **File Dialogs**: `rfd` (0.15) for native OS folder and file pickers.
+The project is structured as a Cargo workspace with three primary crates:
+
+- **`trophyvault_core` (`crates/core`)**: Shared models, database storage (`library_database.json`), SVG generator (`resvg` 0.44, `tiny-skia` 0.11), and integrations (Steam Web API, VDF parser, Bloodborne/bbport save parser).
+- **`trophyvault_desktop` (`crates/desktop`)**: Desktop native UI built with `eframe` / `egui` (0.29) and Glow OpenGL renderer. Supports interactive card generation, theme customization, Steam import, and local sync.
+- **`trophyvault_server` (`crates/server`)**: High-performance headless web server and REST API built with `axum` (0.7) and `tokio`. Serves the cyberpunk web showcase (`static/`), dynamic passport cards, embeds, badges, and health/stats endpoints. Packaged for production via multi-stage Docker (`Dockerfile`).
 
 ## Project Structure
 
 ```
-src/
-├── main.rs       # Application entry point and native window configuration
-├── app.rs        # egui GUI implementation, state, controls, and live preview
-├── data.rs       # Data models, parser for Achievements AppData & Steam users
-├── generator.rs  # SVG layout generator and resvg PNG rasterizer
-└── icons.rs      # Embedded vector SVG HUD icons
+.
+├── Cargo.toml                # Workspace definition
+├── crates/
+│   ├── core/                 # Shared data models, storage, parsers, generator
+│   │   └── src/
+│   ├── desktop/              # egui desktop GUI client
+│   │   └── src/
+│   └── server/               # Axum web server and static assets
+│       ├── src/
+│       ├── static/           # Vanilla JS, CSS, HTML showcase frontend
+│       └── tests/            # API integration tests
+├── Dockerfile                # Multi-stage production container build
+├── docker-compose.yml        # Deployment compose manifest
+└── .github/workflows/        # CI, test, build, and GHCR Docker release workflows
 ```
 
 ## Development & Agent Workflow
 
-When working on features, bug fixes, or enhancements in this repository, always follow this workflow:
-1. **Issue First**: Every task must have an associated GitHub Issue. Check existing open issues first (`gh issue list`). If an issue already exists for the task, use it; otherwise create a new issue before writing code (`gh issue create`).
+When developing features, bug fixes, or enhancements:
+
+1. **Issue First**: Every task must have an associated GitHub Issue. Check existing open issues (`gh issue list`). If none exists, create one (`gh issue create`).
 2. **Feature Branch**: Create a dedicated feature branch for the work (e.g., `git checkout -b <issue-number>-<short-description>`). Never commit feature work directly to `main`.
-3. **Targeted Implementation**: Keep changes scoped strictly to the task. Respect Git safety rules (report modified files, preserve unrelated code and comments).
-4. **Pull Request**: Push the branch and open a Pull Request (`gh pr create`) linking the issue (e.g., `Fixes #<issue-id>`).
-5. **Merge & Close**: Once verified, merge the PR into `main` (`gh pr merge --squash --delete-branch`), ensuring the linked issue is automatically closed.
-
-## Build & CI Guidelines
-
-- **Do Not Build on Resource-Constrained Containers**: Running full GUI Rust builds (with WGPU and graphics dependencies) inside minimal LXC containers can consume significant memory and CPU.
-- **GitHub Actions Workflow**: Continuous integration and release builds are handled automatically in `.github/workflows/build.yml` on `windows-latest` (producing `.exe`) and `ubuntu-latest`.
-- **Styling Rules**: Maintain the 1200 × 850 aspect ratio for passport outputs. Any new icons should be clean SVG paths added to `src/icons.rs`.
+3. **Targeted Implementation**: Keep changes scoped strictly to the task. Maintain clean code and formatting.
+4. **Pull Request Mandate**:
+   - Push the branch and create a Pull Request using `gh pr create`.
+   - **MANDATORY**: Always assign `@me` (`MohandL3G`) to all PRs using `--assignee "@me"`.
+   - Reference the issue in the PR description (e.g., `Closes #<issue-id>`).
+5. **Merge & Deployment**:
+   - Merge verified PRs into `main` using squash merge (`gh pr merge <PR_NUM> --squash --delete-branch`).
+   - For web/server updates, verify the GitHub Actions Docker build workflow, then deploy to CT 100 via Docker Compose.
+6. **Visual Verification**:
+   - Use the local Playwright MCP in CT 103 to verify UI changes and capture screenshots against the deployed instance (`http://192.168.0.100:5050`) before closing tasks.

@@ -119,6 +119,14 @@ export function getOvrTier(score) {
 }
 
 /**
+ * Clean platform tag suffixes from game title (e.g. "Warframe (Steam)" -> "Warframe")
+ */
+export function cleanGameTitle(name = '') {
+  if (!name) return '';
+  return name.replace(/\s*\((?:Steam|Steam Version|PC Recomp|PC Port|Non-Steam|LuaTools)\)/gi, '').trim();
+}
+
+/**
  * Normalize platform name for consistent display and filtering
  */
 export function normalizePlatform(platform = '') {

@@ -3,7 +3,7 @@
  * High-performance vanilla ES module dashboard for TrophyVault.
  */
 
-import { TrophyVaultApi, formatPlaytime, getOvrTier, normalizePlatform, generateFallbackBanner } from './api.js';
+import { TrophyVaultApi, formatPlaytime, getOvrTier, normalizePlatform, generateFallbackBanner, cleanGameTitle } from './api.js';
 
 const PREFS_STORAGE_KEY = 'trophyvault_web_settings';
 
@@ -482,7 +482,10 @@ class TrophyVaultApp {
         this.api.getGames()
       ]);
 
-      this.games = Array.isArray(games) ? games : [];
+      this.games = Array.isArray(games) ? games.map(g => ({
+        ...g,
+        name: cleanGameTitle(g.name)
+      })) : [];
       this.stats = stats;
 
       this.renderHeaderAndHero();

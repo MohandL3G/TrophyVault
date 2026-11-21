@@ -366,7 +366,7 @@ pub fn load_or_create_database_for_user(steam_id: Option<&str>) -> LibraryDataba
         manual_games: vec![
             ManualGameSetting {
                 id: "bloodborne".to_string(),
-                name: "Bloodborne (PC Recomp)".to_string(),
+                name: "Bloodborne".to_string(),
                 platform: "PC Port / Recomp".to_string(),
                 parser_type: "bbport".to_string(),
                 user_dir: default_user_dir,

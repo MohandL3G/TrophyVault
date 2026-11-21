@@ -145,7 +145,14 @@ class TrophyVaultApp {
       const raw = localStorage.getItem(PREFS_STORAGE_KEY);
       if (!raw) return;
       const prefs = JSON.parse(raw);
-      if (typeof prefs.selectedPlatform === 'string') this.selectedPlatform = prefs.selectedPlatform;
+      if (typeof prefs.selectedPlatform === 'string') {
+        // Reset removed filter categories if cached in preferences
+        if (prefs.selectedPlatform === 'luatools' || prefs.selectedPlatform === 'non-steam') {
+          this.selectedPlatform = 'all';
+        } else {
+          this.selectedPlatform = prefs.selectedPlatform;
+        }
+      }
       if (typeof prefs.perfectOnly === 'boolean') this.perfectOnly = prefs.perfectOnly;
       if (typeof prefs.currentSort === 'string') this.currentSort = prefs.currentSort;
       if (typeof prefs.currentView === 'string') this.currentView = prefs.currentView;

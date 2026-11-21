@@ -123,8 +123,7 @@ export function getOvrTier(score) {
  */
 export function normalizePlatform(platform = '') {
   const p = platform.toLowerCase();
-  if (p.includes('steam') && !p.includes('non-steam')) return 'Steam';
-  if (p.includes('luatools') || p.includes('stplug')) return 'LuaTools';
+  if (p.includes('steam') || p.includes('luatools') || p.includes('stplug')) return 'Steam';
   if (p.includes('non-steam') || p.includes('shortcut')) return 'Non-Steam';
   if (p.includes('port') || p.includes('bloodborne') || p.includes('shadps4') || p.includes('bbport')) return 'Ports';
   return platform || 'Custom';

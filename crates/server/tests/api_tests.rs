@@ -28,15 +28,17 @@ fn create_test_db() -> LibraryDatabase {
             total: 40,
             pct: 100,
             platinum: true,
+            base_playtime_minutes: 0,
             playtime_minutes: 5400,
             last_played: Some(1730000000),
             source: "manual".to_string(),
             last_scanned: 1730000000,
             trophies: vec![SavedTrophy {
-                id: 0,
+                id: "0".to_string(),
                 name: "Bloodborne".to_string(),
                 description: "All trophies unlocked".to_string(),
-                grade: "P".to_string(),
+                grade: "Platinum".to_string(),
+                unlocked: true,
                 unlocked_time: Some(1730000000),
             }],
         },
@@ -52,6 +54,7 @@ fn create_test_db() -> LibraryDatabase {
             total: 30,
             pct: 50,
             platinum: false,
+            base_playtime_minutes: 0,
             playtime_minutes: 2400,
             last_played: Some(1730100000),
             source: "steam".to_string(),
@@ -375,6 +378,7 @@ async fn test_sync_success_and_state_update() {
             total: 42,
             pct: 100,
             platinum: true,
+            base_playtime_minutes: 0,
             playtime_minutes: 12000,
             last_played: Some(1730300000),
             source: "steam".to_string(),
@@ -500,6 +504,7 @@ async fn test_incremental_update_sync_preserves_unmentioned_games() {
             total: 40,
             pct: 100,
             platinum: true,
+            base_playtime_minutes: 0,
             playtime_minutes: 9999,
             last_played: Some(1730500000),
             source: "manual".to_string(),
@@ -520,6 +525,7 @@ async fn test_incremental_update_sync_preserves_unmentioned_games() {
             total: 42,
             pct: 100,
             platinum: true,
+            base_playtime_minutes: 0,
             playtime_minutes: 15000,
             last_played: Some(1730500000),
             source: "steam".to_string(),
@@ -584,6 +590,7 @@ async fn test_full_sync_overwrites_entire_games_database() {
             total: 42,
             pct: 100,
             platinum: true,
+            base_playtime_minutes: 0,
             playtime_minutes: 15000,
             last_played: Some(1730500000),
             source: "steam".to_string(),
@@ -841,5 +848,109 @@ async fn test_server_config_path_resolution_and_migration() {
         resolve_sqlite_path(Path::new("./data/trophyvault.db")),
         Path::new("./data/trophyvault.db")
     );
+}
+
+#[tokio::test]
+async fn test_server_playtime_protection_update_mode() {
+    let (app, _temp, api_key) = setup_test_app();
+
+    // In initial setup, Bloodborne has 5400 minutes.
+    // Client attempts to sync payload with lower playtime (e.g. 120 minutes)
+    let mut payload = create_test_db();
+    if let Some(bb) = payload.games.get_mut("bloodborne") {
+        bb.playtime_minutes = 120;
+    }
+
+    let req = Request::builder()
+        .uri("/api/sync?mode=update")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {}", api_key))
+        .body(Body::from(serde_json::to_string(&payload).unwrap()))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Verify playtime_minutes remained at max(5400, 120) = 5400
+    let games_req = Request::builder().uri("/api/games").method("GET").body(Body::empty()).unwrap();
+    let games_res = app.oneshot(games_req).await.unwrap();
+    let bytes = games_res.into_body().collect().await.unwrap().to_bytes();
+    let games: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
+    let bb = games.iter().find(|g| g["id"] == "bloodborne").unwrap();
+    assert_eq!(bb["playtime_minutes"], 5400);
+}
+
+#[tokio::test]
+async fn test_server_playtime_protection_full_mode() {
+    let (app, _temp, api_key) = setup_test_app();
+
+    // In initial setup, Bloodborne has 5400 minutes.
+    // Client attempts a full sync with lower playtime (e.g. 0 minutes)
+    let mut payload = create_test_db();
+    if let Some(bb) = payload.games.get_mut("bloodborne") {
+        bb.playtime_minutes = 0;
+    }
+
+    let req = Request::builder()
+        .uri("/api/sync?mode=full")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {}", api_key))
+        .body(Body::from(serde_json::to_string(&payload).unwrap()))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Verify playtime_minutes remained at max(5400, 0) = 5400
+    let games_req = Request::builder().uri("/api/games").method("GET").body(Body::empty()).unwrap();
+    let games_res = app.oneshot(games_req).await.unwrap();
+    let bytes = games_res.into_body().collect().await.unwrap().to_bytes();
+    let games: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
+    let bb = games.iter().find(|g| g["id"] == "bloodborne").unwrap();
+    assert_eq!(bb["playtime_minutes"], 5400);
+}
+
+#[tokio::test]
+async fn test_game_trophies_endpoint() {
+    let (app, _temp, _key) = setup_test_app();
+
+    let req = Request::builder()
+        .uri("/api/games/bloodborne/trophies")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let trophies: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
+    assert!(!trophies.is_empty());
+    assert_eq!(trophies[0]["id"], "0");
+    assert_eq!(trophies[0]["name"], "Bloodborne");
+    assert_eq!(trophies[0]["grade"], "Platinum");
+    assert_eq!(trophies[0]["unlocked"], true);
+}
+
+#[tokio::test]
+async fn test_single_game_detail_endpoint() {
+    let (app, _temp, _key) = setup_test_app();
+
+    let req = Request::builder()
+        .uri("/api/games/bloodborne")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let game: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(game["id"], "bloodborne");
+    assert_eq!(game["name"], "Bloodborne");
+    assert_eq!(game["trophies"][0]["name"], "Bloodborne");
 }
 

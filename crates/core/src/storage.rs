@@ -157,6 +157,8 @@ pub struct SavedGameEntry {
     pub pct: u32,
     pub platinum: bool,
     #[serde(default)]
+    pub base_playtime_minutes: u32,
+    #[serde(default)]
     pub playtime_minutes: u32,
     pub last_played: Option<u64>,
     pub source: String, // "manual", "steam", "luatools", "legacy"
@@ -165,14 +167,80 @@ pub struct SavedGameEntry {
     pub trophies: Vec<SavedTrophy>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SavedTrophy {
-    pub id: u32,
+    #[serde(deserialize_with = "deserialize_id")]
+    pub id: String,
     pub name: String,
     pub description: String,
     pub grade: String,
-    pub unlocked_time: Option<u64>,
+    #[serde(default)]
+    pub unlocked: bool,
+    #[serde(default)]
+    pub unlocked_time: Option<i64>,
 }
+
+fn deserialize_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct IdVisitor;
+    impl<'de> serde::de::Visitor<'de> for IdVisitor {
+        type Value = String;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or an integer")
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(v.to_string())
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E> {
+            Ok(v)
+        }
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+            Ok(v.to_string())
+        }
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(v.to_string())
+        }
+    }
+    deserializer.deserialize_any(IdVisitor)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncResult {
+    pub restored_games: usize,
+    pub message: String,
+    pub timestamp: u64,
+}
+
+impl std::fmt::Display for SyncResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum StorageError {
+    Network(String),
+    Json(String),
+    Database(String),
+    Unauthorized(String),
+    Other(String),
+}
+
+impl std::fmt::Display for StorageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StorageError::Network(msg) => write!(f, "Network error: {}", msg),
+            StorageError::Json(msg) => write!(f, "JSON error: {}", msg),
+            StorageError::Database(msg) => write!(f, "Database error: {}", msg),
+            StorageError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
+            StorageError::Other(msg) => write!(f, "Storage error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for StorageError {}
 
 #[derive(Debug, Clone, Default)]
 pub struct SyncReport {
@@ -379,6 +447,27 @@ pub fn load_or_create_database_for_user(steam_id: Option<&str>) -> LibraryDataba
         games: HashMap::new(),
     };
 
+    // Pre-seed Bloodborne with all 40 default trophies
+    db.games.insert(
+        "bloodborne".to_string(),
+        SavedGameEntry {
+            id: "bloodborne".to_string(),
+            name: "Bloodborne".to_string(),
+            platform: "PC Port / Recomp".to_string(),
+            appid: Some("2485153835".to_string()),
+            unlocked: 0,
+            total: 40,
+            pct: 0,
+            platinum: false,
+            base_playtime_minutes: 0,
+            playtime_minutes: 0,
+            last_played: None,
+            source: "manual".to_string(),
+            last_scanned: current_timestamp(),
+            trophies: crate::bloodborne::default_bloodborne_trophies(),
+        },
+    );
+
     // Attempt to seed from legacy Achievements app if dashboard-summary.json exists
     seed_from_legacy_achievements(&mut db);
 
@@ -449,6 +538,7 @@ fn seed_from_legacy_achievements(db: &mut LibraryDatabase) {
                                     total: entry.total,
                                     pct,
                                     platinum,
+                                    base_playtime_minutes: 0,
                                     playtime_minutes: 0,
                                     last_played: None,
                                     source: "steam".to_string(),
@@ -576,28 +666,57 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
             match parse_bloodborne_user_dir(user_path) {
                 Ok(res) => {
                     report.manual_scanned += 1;
-                    let mut playtime = 0;
+                    let mut scanned_playtime = 0;
                     let mut last_played = None;
 
                     // Lookup playtime via Non-Steam AppID if specified
                     if let Some(appid) = &manual_cfg.non_steam_appid {
                         if let Some(usage) = lookup_playtime(&playtimes, appid) {
-                            playtime = usage.playtime_minutes;
+                            scanned_playtime = usage.playtime_minutes;
                             last_played = usage.last_played;
                         }
                     }
 
-                    let trophies = res
-                        .trophies
-                        .into_iter()
-                        .map(|t| SavedTrophy {
-                            id: t.id,
-                            name: t.name,
-                            description: t.description,
-                            grade: t.grade,
-                            unlocked_time: t.unlock_time,
-                        })
-                        .collect();
+                    // Existing entry check for previous AppID and playtime preservation
+                    let (mut base_playtime, prev_appid, existing_trophies, prev_playtime, prev_last_played) =
+                        if let Some(existing) = db.games.get(&manual_cfg.id) {
+                            (
+                                existing.base_playtime_minutes,
+                                existing.appid.clone(),
+                                existing.trophies.clone(),
+                                existing.playtime_minutes,
+                                existing.last_played,
+                            )
+                        } else {
+                            (0, None, Vec::new(), 0, None)
+                        };
+
+                    // If non-Steam shortcut's AppID changes or resets playtime to 0, preserve previously recorded playtime as base_playtime_minutes
+                    if manual_cfg.non_steam_appid != prev_appid && prev_appid.is_some() {
+                        base_playtime = base_playtime.max(prev_playtime);
+                    } else if scanned_playtime == 0 && prev_playtime > 0 {
+                        base_playtime = base_playtime.max(prev_playtime);
+                    }
+
+                    let final_playtime = (base_playtime + scanned_playtime).max(prev_playtime);
+
+                    let trophies = if !res.trophies.is_empty() {
+                        res.trophies
+                            .into_iter()
+                            .map(|t| SavedTrophy {
+                                id: t.id.to_string(),
+                                name: t.name,
+                                description: t.description,
+                                grade: crate::bloodborne::normalize_grade(&t.grade),
+                                unlocked: t.unlocked,
+                                unlocked_time: t.unlock_time.map(|ts| ts as i64),
+                            })
+                            .collect()
+                    } else if !existing_trophies.is_empty() {
+                        existing_trophies
+                    } else {
+                        crate::bloodborne::default_bloodborne_trophies()
+                    };
 
                     let entry = SavedGameEntry {
                         id: manual_cfg.id.clone(),
@@ -608,8 +727,9 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
                         total: res.total,
                         pct: res.pct,
                         platinum: res.platinum,
-                        playtime_minutes: playtime,
-                        last_played,
+                        base_playtime_minutes: base_playtime,
+                        playtime_minutes: final_playtime,
+                        last_played: last_played.or(prev_last_played),
                         source: "manual".to_string(),
                         last_scanned: now,
                         trophies,
@@ -621,13 +741,38 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
                         res.unlocked,
                         res.total,
                         res.pct,
-                        playtime / 60
+                        final_playtime / 60
                     ));
 
                     db.games.insert(manual_cfg.id.clone(), entry);
                 }
                 Err(err) => {
                     report.details.push(format!("Manual game {}: {}", manual_cfg.name, err));
+                    if let Some(existing) = db.games.get_mut(&manual_cfg.id) {
+                        if existing.trophies.is_empty() {
+                            existing.trophies = crate::bloodborne::default_bloodborne_trophies();
+                        }
+                    } else {
+                        db.games.insert(
+                            manual_cfg.id.clone(),
+                            SavedGameEntry {
+                                id: manual_cfg.id.clone(),
+                                name: manual_cfg.name.clone(),
+                                platform: manual_cfg.platform.clone(),
+                                appid: manual_cfg.non_steam_appid.clone(),
+                                unlocked: 0,
+                                total: 40,
+                                pct: 0,
+                                platinum: false,
+                                base_playtime_minutes: 0,
+                                playtime_minutes: 0,
+                                last_played: None,
+                                source: "manual".to_string(),
+                                last_scanned: now,
+                                trophies: crate::bloodborne::default_bloodborne_trophies(),
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -658,6 +803,7 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
                         total: 0,
                         pct: 0,
                         platinum: false,
+                        base_playtime_minutes: 0,
                         playtime_minutes: 0,
                         last_played: None,
                         source: "steam".to_string(),
@@ -678,19 +824,54 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
         });
 
         if !is_manual {
-            let mut playtime = 0;
+            let mut scanned_playtime = 0;
             let mut last_played = None;
             if let Some(usage) = lookup_playtime(&playtimes, &sc_appid_str) {
-                playtime = usage.playtime_minutes;
+                scanned_playtime = usage.playtime_minutes;
                 last_played = usage.last_played;
+            }
+
+            // Check if AppID changed for an existing shortcut with matching name
+            let previous_shortcut_key = db.games.iter()
+                .find(|(k, g)| *k != &sc_appid_str && g.name.eq_ignore_ascii_case(&sc.appname) && g.source == "shortcut")
+                .map(|(k, _)| k.clone());
+
+            if let Some(old_key) = previous_shortcut_key {
+                if let Some(old_entry) = db.games.remove(&old_key) {
+                    let base = old_entry.base_playtime_minutes.max(old_entry.playtime_minutes);
+                    let accumulated = base + scanned_playtime;
+                    db.games.insert(
+                        sc_appid_str.clone(),
+                        SavedGameEntry {
+                            id: sc_appid_str.clone(),
+                            name: sc.appname.clone(),
+                            platform: "Non-Steam".to_string(),
+                            appid: Some(sc_appid_str.clone()),
+                            unlocked: old_entry.unlocked,
+                            total: old_entry.total,
+                            pct: old_entry.pct,
+                            platinum: old_entry.platinum,
+                            base_playtime_minutes: base,
+                            playtime_minutes: accumulated,
+                            last_played: last_played.or(old_entry.last_played),
+                            source: "shortcut".to_string(),
+                            last_scanned: now,
+                            trophies: old_entry.trophies,
+                        },
+                    );
+                    continue;
+                }
             }
 
             if let Some(existing) = db.games.get_mut(&sc_appid_str) {
                 if existing.name.is_empty() {
                     existing.name = sc.appname.clone();
                 }
-                if playtime > existing.playtime_minutes {
-                    existing.playtime_minutes = playtime;
+                // If scanned playtime is 0 (or reset), preserve previous playtime as base_playtime_minutes
+                if scanned_playtime == 0 && existing.playtime_minutes > 0 {
+                    existing.base_playtime_minutes = existing.base_playtime_minutes.max(existing.playtime_minutes);
+                } else if scanned_playtime > 0 {
+                    existing.playtime_minutes = (existing.base_playtime_minutes + scanned_playtime).max(existing.playtime_minutes);
                 }
                 if last_played.is_some() {
                     existing.last_played = last_played;
@@ -707,7 +888,8 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
                         total: 0,
                         pct: 0,
                         platinum: false,
-                        playtime_minutes: playtime,
+                        base_playtime_minutes: 0,
+                        playtime_minutes: scanned_playtime,
                         last_played,
                         source: "shortcut".to_string(),
                         last_scanned: now,
@@ -722,8 +904,9 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
     for entry in db.games.values_mut() {
         if let Some(appid) = &entry.appid {
             if let Some(usage) = lookup_playtime(&playtimes, appid) {
-                if usage.playtime_minutes > entry.playtime_minutes {
-                    entry.playtime_minutes = usage.playtime_minutes;
+                let accumulated = entry.base_playtime_minutes + usage.playtime_minutes;
+                if accumulated > entry.playtime_minutes {
+                    entry.playtime_minutes = accumulated;
                 }
                 if usage.last_played.is_some() {
                     entry.last_played = usage.last_played;
@@ -973,6 +1156,160 @@ pub fn load_active_user_database() -> LibraryDatabase {
         db.preferences.steam_id = initial_steam_id.map(|s| s.to_string());
     }
     db
+}
+
+impl LibraryDatabase {
+    /// Restores the library from the remote TrophyVault server by querying `GET /api/games`.
+    /// Preserves and sets `base_playtime_minutes` for each game to ensure historical playtime accumulates.
+    pub fn restore_from_remote(
+        &mut self,
+        remote_url: &str,
+        token: Option<&str>,
+    ) -> Result<SyncResult, StorageError> {
+        let base_url = remote_url.trim().trim_end_matches('/');
+        if base_url.is_empty() {
+            return Err(StorageError::Other("Remote URL cannot be empty".to_string()));
+        }
+        let url = if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
+            format!("https://{}/api/games", base_url)
+        } else {
+            format!("{}/api/games", base_url)
+        };
+
+        let mut req = ureq::get(&url).timeout(std::time::Duration::from_secs(15));
+        if let Some(t) = token {
+            let trimmed = t.trim();
+            if !trimmed.is_empty() {
+                req = req.set("Authorization", &format!("Bearer {}", trimmed));
+            }
+        }
+
+        let resp = req.call().map_err(|e| match e {
+            ureq::Error::Status(401, _) => {
+                StorageError::Unauthorized("Unauthorized: Invalid token".to_string())
+            }
+            ureq::Error::Status(code, r) => {
+                let msg = r.into_string().unwrap_or_default();
+                StorageError::Network(format!("HTTP {}: {}", code, msg))
+            }
+            ureq::Error::Transport(err) => StorageError::Network(format!("Connection error: {}", err)),
+        })?;
+
+        #[derive(Deserialize)]
+        struct RemoteGameItem {
+            id: String,
+            name: String,
+            platform: String,
+            appid: Option<String>,
+            #[serde(default)]
+            unlocked: u32,
+            #[serde(default)]
+            total: u32,
+            #[serde(default)]
+            pct: u32,
+            #[serde(default)]
+            platinum: bool,
+            #[serde(default)]
+            playtime_minutes: u32,
+            #[serde(default)]
+            last_played: Option<u64>,
+            #[serde(default)]
+            source: Option<String>,
+            #[serde(default)]
+            last_scanned: Option<u64>,
+            #[serde(default)]
+            trophies: Option<Vec<SavedTrophy>>,
+        }
+
+        let remote_games: Vec<RemoteGameItem> =
+            resp.into_json().map_err(|e| StorageError::Json(e.to_string()))?;
+        let now = current_timestamp();
+        let mut restored_count = 0;
+
+        for item in remote_games {
+            restored_count += 1;
+            let remote_playtime = item.playtime_minutes;
+            let src = item.source.unwrap_or_else(|| "remote".to_string());
+            let scanned = item.last_scanned.unwrap_or(now);
+
+            if let Some(existing) = self.games.get_mut(&item.id) {
+                // Ensure base_playtime_minutes is at least the remote playtime
+                existing.base_playtime_minutes =
+                    existing.base_playtime_minutes.max(remote_playtime);
+                existing.playtime_minutes =
+                    existing.playtime_minutes.max(existing.base_playtime_minutes);
+                existing.unlocked = existing.unlocked.max(item.unlocked);
+                existing.total = existing.total.max(item.total);
+                existing.pct = existing.pct.max(item.pct);
+                existing.platinum = existing.platinum || item.platinum;
+                if existing.last_played.is_none() {
+                    existing.last_played = item.last_played;
+                }
+                if existing.trophies.is_empty() {
+                    if let Some(t) = item.trophies {
+                        existing.trophies = t;
+                    }
+                }
+            } else {
+                let trophies = item.trophies.unwrap_or_else(|| {
+                    if item.id.eq_ignore_ascii_case("bloodborne") || item.name.eq_ignore_ascii_case("Bloodborne") {
+                        crate::bloodborne::default_bloodborne_trophies()
+                    } else {
+                        Vec::new()
+                    }
+                });
+                self.games.insert(
+                    item.id.clone(),
+                    SavedGameEntry {
+                        id: item.id.clone(),
+                        name: item.name,
+                        platform: item.platform,
+                        appid: item.appid,
+                        unlocked: item.unlocked,
+                        total: item.total,
+                        pct: item.pct,
+                        platinum: item.platinum,
+                        base_playtime_minutes: remote_playtime,
+                        playtime_minutes: remote_playtime,
+                        last_played: item.last_played,
+                        source: src,
+                        last_scanned: scanned,
+                        trophies,
+                    },
+                );
+            }
+        }
+
+        self.last_updated = now;
+        Ok(SyncResult {
+            restored_games: restored_count,
+            message: format!("Successfully restored {} games from remote", restored_count),
+            timestamp: now,
+        })
+    }
+}
+
+/// Restores the library from the remote TrophyVault server using configured `SyncSettings` and persists to local storage.
+pub fn restore_from_remote(
+    db: &mut LibraryDatabase,
+    settings: &SyncSettings,
+) -> Result<SyncResult, StorageError> {
+    let token = if settings.api_key.trim().is_empty() {
+        None
+    } else {
+        Some(settings.api_key.trim())
+    };
+    let res = db.restore_from_remote(&settings.server_url, token)?;
+    let _ = save_database(db);
+    Ok(res)
+}
+
+/// Restores the active user library from a remote TrophyVault server URL and optional token.
+pub fn restore_from_remote_url(remote_url: &str, token: Option<&str>) -> Result<SyncResult, StorageError> {
+    let mut db = load_active_user_database();
+    let res = db.restore_from_remote(remote_url, token)?;
+    let _ = save_database(&db);
+    Ok(res)
 }
 
 #[cfg(test)]
@@ -1295,5 +1632,108 @@ mod tests {
         let result = purge_remote_database(&settings);
         assert!(result.is_ok(), "Purge failed: {:?}", result);
         assert!(result.unwrap().contains("{\"purged\":true}"));
+    }
+
+    #[test]
+    fn test_saved_trophy_id_string_deserialization() {
+        // Test deserializing when id is an integer (legacy format)
+        let json_int = r#"{"id":1,"name":"Trophy 1","description":"Desc","grade":"Gold","unlocked":true,"unlocked_time":1730000000}"#;
+        let t1: SavedTrophy = serde_json::from_str(json_int).unwrap();
+        assert_eq!(t1.id, "1");
+        assert!(t1.unlocked);
+        assert_eq!(t1.unlocked_time, Some(1730000000));
+
+        // Test deserializing when id is a string
+        let json_str = r#"{"id":"bloodborne_0","name":"Bloodborne","description":"All trophies","grade":"Platinum","unlocked":false}"#;
+        let t2: SavedTrophy = serde_json::from_str(json_str).unwrap();
+        assert_eq!(t2.id, "bloodborne_0");
+        assert!(!t2.unlocked);
+        assert_eq!(t2.unlocked_time, None);
+    }
+
+    #[test]
+    fn test_restore_from_remote_mock_server() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("Must bind ephemeral port");
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0u8; 4096];
+                let mut request = Vec::new();
+                while let Ok(n) = stream.read(&mut buffer) {
+                    if n == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..n]);
+                    if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+
+                let req_str = String::from_utf8_lossy(&request);
+                assert!(req_str.contains("GET /api/games"));
+                assert!(req_str.contains("Authorization: Bearer test-token"));
+
+                let response_body = r#"[
+                    {
+                        "id": "bloodborne",
+                        "name": "Bloodborne",
+                        "platform": "PC Port / Recomp",
+                        "appid": "2485153835",
+                        "unlocked": 40,
+                        "total": 40,
+                        "pct": 100,
+                        "platinum": true,
+                        "playtime_minutes": 5400,
+                        "playtime_formatted": "90h 0m",
+                        "last_played": 1732000000,
+                        "source": "manual",
+                        "last_scanned": 1732000100
+                    }
+                ]"#;
+
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+
+                let mut drain = [0u8; 1024];
+                while let Ok(n) = stream.read(&mut drain) {
+                    if n == 0 {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let mut db = LibraryDatabase {
+            version: 1,
+            last_updated: 0,
+            preferences: DatabasePreferences::default(),
+            manual_games: Vec::new(),
+            games: HashMap::new(),
+        };
+
+        let remote_url = format!("http://127.0.0.1:{}", port);
+        let result = db.restore_from_remote(&remote_url, Some("test-token"));
+        assert!(result.is_ok(), "Restore should succeed: {:?}", result);
+
+        let res = result.unwrap();
+        assert_eq!(res.restored_games, 1);
+
+        let bb = db.games.get("bloodborne").expect("Bloodborne must be in restored db");
+        assert_eq!(bb.name, "Bloodborne");
+        assert_eq!(bb.playtime_minutes, 5400);
+        assert_eq!(bb.base_playtime_minutes, 5400); // base_playtime_minutes must be set from remote!
+        assert_eq!(bb.unlocked, 40);
+        assert_eq!(bb.total, 40);
+        assert!(bb.platinum);
     }
 }

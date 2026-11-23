@@ -1,4 +1,5 @@
 pub mod badge;
+pub mod db;
 pub mod handlers;
 pub mod state;
 
@@ -67,6 +68,8 @@ pub fn create_app(state: SharedState, static_dir: PathBuf) -> Router {
         .route("/api/badge.svg", get(handlers::badge_handler))
         .route("/api/stats", get(handlers::stats_handler))
         .route("/api/games", get(handlers::games_handler))
+        .route("/api/games/:id", get(handlers::single_game_handler))
+        .route("/api/games/:id/trophies", get(handlers::game_trophies_handler))
         .route(
             "/api/avatar",
             get(handlers::get_avatar_handler)

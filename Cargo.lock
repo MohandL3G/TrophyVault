@@ -3707,7 +3707,7 @@ dependencies = [
 
 [[package]]
 name = "trophyvault"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dirs",
  "eframe",
@@ -3721,7 +3721,7 @@ dependencies = [
 
 [[package]]
 name = "trophyvault-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dirs",
  "resvg",
@@ -3735,7 +3735,7 @@ dependencies = [
 
 [[package]]
 name = "trophyvault-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "http-body-util",

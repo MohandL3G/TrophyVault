@@ -396,7 +396,7 @@ pub fn load_library_database_from_sqlite(
     // 4. Load trophies
     {
         let mut trophy_stmt = conn.prepare(
-            "SELECT game_id, id, name, description, grade, unlocked, unlocked_time FROM trophies ORDER BY game_id, id;"
+            "SELECT game_id, CAST(id AS TEXT), name, description, grade, unlocked, unlocked_time FROM trophies ORDER BY game_id, id;"
         )?;
         let rows = trophy_stmt.query_map([], |row| {
             Ok((
@@ -431,7 +431,7 @@ pub fn load_library_database_from_sqlite(
 /// Query trophies for a specific game, ordered by unlocked desc, then id asc.
 pub fn get_trophies_for_game(conn: &Connection, game_id: &str) -> SqliteResult<Vec<SavedTrophy>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, description, grade, unlocked, unlocked_time FROM trophies WHERE game_id = ?1 ORDER BY unlocked DESC, id ASC;"
+        "SELECT CAST(id AS TEXT), name, description, grade, unlocked, unlocked_time FROM trophies WHERE game_id = ?1 ORDER BY unlocked DESC, id ASC;"
     )?;
     let rows = stmt.query_map(params![game_id], |row| {
         Ok(SavedTrophy {
@@ -473,7 +473,7 @@ pub fn save_trophies_for_game(conn: &Connection, game_id: &str, trophies: &[Save
 /// Returns a map of all trophies grouped by game_id.
 pub fn get_all_trophies(conn: &Connection) -> SqliteResult<HashMap<String, Vec<SavedTrophy>>> {
     let mut stmt = conn.prepare(
-        "SELECT game_id, id, name, description, grade, unlocked, unlocked_time FROM trophies ORDER BY game_id, id ASC;"
+        "SELECT game_id, CAST(id AS TEXT), name, description, grade, unlocked, unlocked_time FROM trophies ORDER BY game_id, id ASC;"
     )?;
     let rows = stmt.query_map([], |row| {
         Ok((
@@ -873,5 +873,73 @@ mod tests {
         let all = get_all_trophies(&conn).unwrap();
         assert!(all.contains_key("bloodborne"));
         assert_eq!(all["bloodborne"].len(), 2);
+    }
+
+    #[test]
+    fn test_load_library_database_with_legacy_integer_trophy_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE games (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                appid TEXT,
+                unlocked INTEGER NOT NULL DEFAULT 0,
+                total INTEGER NOT NULL DEFAULT 0,
+                pct INTEGER NOT NULL DEFAULT 0,
+                platinum INTEGER NOT NULL DEFAULT 0,
+                base_playtime_minutes INTEGER NOT NULL DEFAULT 0,
+                playtime_minutes INTEGER NOT NULL DEFAULT 0,
+                last_played INTEGER,
+                source TEXT NOT NULL DEFAULT '',
+                last_scanned INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE trophies (
+                id INTEGER NOT NULL,
+                game_id TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                grade TEXT NOT NULL DEFAULT '',
+                unlocked INTEGER NOT NULL DEFAULT 0,
+                unlocked_time INTEGER,
+                PRIMARY KEY (game_id, id)
+            );
+
+            CREATE TABLE preferences (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE manual_games (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                platform TEXT NOT NULL DEFAULT '',
+                parser_type TEXT NOT NULL DEFAULT '',
+                user_dir TEXT NOT NULL DEFAULT '',
+                non_steam_appid TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1
+            );
+
+            INSERT INTO games (id, name, platform, unlocked, total, pct, platinum, playtime_minutes, source, last_scanned)
+            VALUES ('bb', 'Bloodborne', 'PlayStation', 1, 1, 100, 1, 3600, 'manual', 1700000000);
+
+            INSERT INTO trophies (id, game_id, name, description, grade, unlocked, unlocked_time)
+            VALUES (42, 'bb', 'Great One', 'Defeated boss', 'Gold', 1, 1700000100);
+            ",
+        )
+        .unwrap();
+
+        let db = load_library_database_from_sqlite(&conn).expect("Must load even with INTEGER trophy id");
+        let game = db.games.get("bb").expect("Game must exist");
+        assert_eq!(game.trophies.len(), 1);
+        assert_eq!(game.trophies[0].id, "42");
+        assert_eq!(game.trophies[0].name, "Great One");
+        assert!(game.trophies[0].unlocked);
+
+        let trophies = get_trophies_for_game(&conn, "bb").expect("get_trophies_for_game must succeed");
+        assert_eq!(trophies.len(), 1);
+        assert_eq!(trophies[0].id, "42");
     }
 }

@@ -170,24 +170,44 @@ pub async fn sync_handler(
         .map(|m| m.eq_ignore_ascii_case("full"))
         .unwrap_or(false);
 
-    let final_db = if is_full_sync {
-        let mut db = payload;
-        db.last_updated = current_timestamp();
-        db
-    } else {
-        // Incremental upsert: merge payload.games into existing database.games
+    let final_db = {
         let current_state = state.read().await;
-        let mut db = current_state.database.clone();
-        for (game_id, entry) in payload.games {
-            db.games.insert(game_id, entry);
+        if is_full_sync {
+            let mut db = payload;
+            // Playtime Protection in full sync: ensure playtime_minutes never decreases
+            for (game_id, entry) in &mut db.games {
+                if let Some(stored) = current_state.database.games.get(game_id) {
+                    entry.playtime_minutes = entry.playtime_minutes.max(stored.playtime_minutes);
+                    entry.base_playtime_minutes = entry.base_playtime_minutes.max(stored.base_playtime_minutes);
+                    if entry.trophies.is_empty() && !stored.trophies.is_empty() {
+                        entry.trophies = stored.trophies.clone();
+                    }
+                }
+            }
+            db.last_updated = current_timestamp();
+            db
+        } else {
+            // Incremental upsert: merge payload.games into existing database.games
+            let mut db = current_state.database.clone();
+            for (game_id, mut entry) in payload.games {
+                // Playtime Protection in update sync: ensure playtime_minutes never decreases
+                if let Some(stored) = db.games.get(&game_id) {
+                    entry.playtime_minutes = entry.playtime_minutes.max(stored.playtime_minutes);
+                    entry.base_playtime_minutes = entry.base_playtime_minutes.max(stored.base_playtime_minutes);
+                    if entry.trophies.is_empty() && !stored.trophies.is_empty() {
+                        entry.trophies = stored.trophies.clone();
+                    }
+                }
+                db.games.insert(game_id, entry);
+            }
+            db.preferences = payload.preferences;
+            if !payload.manual_games.is_empty() {
+                db.manual_games = payload.manual_games;
+            }
+            db.version = payload.version;
+            db.last_updated = current_timestamp();
+            db
         }
-        db.preferences = payload.preferences;
-        if !payload.manual_games.is_empty() {
-            db.manual_games = payload.manual_games;
-        }
-        db.version = payload.version;
-        db.last_updated = current_timestamp();
-        db
     };
 
     // 2. Persist database atomically to disk
@@ -527,6 +547,138 @@ pub async fn games_handler(State(state): State<SharedState>) -> Json<Vec<GameSum
     });
 
     Json(games)
+}
+
+/// GET /api/games/:id/trophies
+///
+/// Returns the list of individual trophies for the specified game as JSON.
+pub async fn game_trophies_handler(
+    State(state): State<SharedState>,
+    axum::extract::Path(game_id): axum::extract::Path<String>,
+) -> Json<Vec<trophyvault_core::storage::SavedTrophy>> {
+    let current_state = state.read().await;
+
+    // 1. Try querying SQLite trophies table directly
+    if let Ok(conn) = current_state.conn.lock() {
+        if let Ok(trophies) = trophyvault_core::db::get_trophies_for_game(&conn, &game_id) {
+            if !trophies.is_empty() {
+                return Json(trophies);
+            }
+        }
+    }
+
+    // 2. Query from in-memory state
+    let db = &current_state.database;
+
+    // By ID
+    if let Some(game) = db.games.get(&game_id) {
+        if !game.trophies.is_empty() {
+            return Json(game.trophies.clone());
+        }
+    }
+
+    // By AppID or case-insensitive name
+    if let Some(game) = db.games.values().find(|g| {
+        g.appid.as_deref() == Some(&game_id) || g.name.eq_ignore_ascii_case(&game_id)
+    }) {
+        if !game.trophies.is_empty() {
+            return Json(game.trophies.clone());
+        }
+        // Try querying SQLite using the resolved game id
+        if let Ok(conn) = current_state.conn.lock() {
+            if let Ok(trophies) = trophyvault_core::db::get_trophies_for_game(&conn, &game.id) {
+                if !trophies.is_empty() {
+                    return Json(trophies);
+                }
+            }
+        }
+    }
+
+    // Fallback for Bloodborne: if game is Bloodborne, populate default 40 trophies
+    if game_id.eq_ignore_ascii_case("bloodborne") {
+        return Json(trophyvault_core::bloodborne::default_bloodborne_trophies());
+    }
+
+    // Return empty array for games with no trophy manifest
+    Json(Vec::new())
+}
+
+/// JSON game detail including trophies returned by /api/games/:id.
+#[derive(Debug, Serialize)]
+pub struct SingleGameDetailResponse {
+    pub id: String,
+    pub name: String,
+    pub platform: String,
+    pub appid: Option<String>,
+    pub unlocked: u32,
+    pub total: u32,
+    pub pct: u32,
+    pub platinum: bool,
+    pub playtime_minutes: u32,
+    pub playtime_formatted: String,
+    pub last_played: Option<u64>,
+    pub source: String,
+    pub last_scanned: u64,
+    pub trophies: Vec<trophyvault_core::storage::SavedTrophy>,
+}
+
+/// GET /api/games/:id
+///
+/// Returns detailed game information including its full trophy list.
+pub async fn single_game_handler(
+    State(state): State<SharedState>,
+    axum::extract::Path(game_id): axum::extract::Path<String>,
+) -> Result<Json<SingleGameDetailResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let current_state = state.read().await;
+    let db = &current_state.database;
+
+    let target_game = db.games.get(&game_id).or_else(|| {
+        db.games.values().find(|g| {
+            g.appid.as_deref() == Some(&game_id) || g.name.eq_ignore_ascii_case(&game_id)
+        })
+    });
+
+    match target_game {
+        Some(game) => {
+            let mut trophies = game.trophies.clone();
+            if trophies.is_empty() {
+                if let Ok(conn) = current_state.conn.lock() {
+                    if let Ok(db_trophies) = trophyvault_core::db::get_trophies_for_game(&conn, &game.id) {
+                        if !db_trophies.is_empty() {
+                            trophies = db_trophies;
+                        }
+                    }
+                }
+            }
+            if trophies.is_empty() && (game.id.eq_ignore_ascii_case("bloodborne") || game.name.eq_ignore_ascii_case("Bloodborne")) {
+                trophies = trophyvault_core::bloodborne::default_bloodborne_trophies();
+            }
+
+            Ok(Json(SingleGameDetailResponse {
+                id: game.id.clone(),
+                name: game.name.clone(),
+                platform: game.platform.clone(),
+                appid: game.appid.clone(),
+                unlocked: game.unlocked,
+                total: game.total,
+                pct: game.pct,
+                platinum: game.platinum,
+                playtime_minutes: game.playtime_minutes,
+                playtime_formatted: format_playtime(game.playtime_minutes as u64),
+                last_played: game.last_played,
+                source: game.source.clone(),
+                last_scanned: game.last_scanned,
+                trophies,
+            }))
+        }
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "status": "error",
+                "message": format!("Game '{}' not found", game_id)
+            })),
+        )),
+    }
 }
 
 /// GET /api/avatar

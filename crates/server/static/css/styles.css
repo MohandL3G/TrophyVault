@@ -1399,6 +1399,12 @@ body.hud-body {
   font-size: 0.72rem;
   font-weight: 700;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hud-trophy-filter-pills .pill:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .hud-trophy-filter-pills .pill.active {
@@ -1407,102 +1413,230 @@ body.hud-body {
   border-color: var(--border-cyan);
 }
 
-.hud-trophies-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 380px;
+/* Trophy Manifest Grid */
+.hud-trophies-list,
+.hud-trophies-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  max-height: 420px;
   overflow-y: auto;
   padding-right: 4px;
 }
 
+@media (max-width: 680px) {
+  .hud-trophies-list,
+  .hud-trophies-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Trophy Card with Glass Background */
+.hud-trophy-card,
 .hud-trophy-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
-  padding: 10px 14px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  transition: border-color 0.2s ease;
+  padding: 12px 14px;
+  background: rgba(18, 24, 36, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  position: relative;
 }
 
+.hud-trophy-card:hover,
+.hud-trophy-item:hover {
+  background: #121824;
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+}
+
+.hud-trophy-card.unlocked,
 .hud-trophy-item.unlocked {
-  border-color: rgba(0, 240, 255, 0.25);
+  border-color: rgba(0, 243, 255, 0.22);
 }
 
+.hud-trophy-card.locked,
 .hud-trophy-item.locked {
-  opacity: 0.6;
+  opacity: 0.65;
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.hud-trophy-card.locked:hover,
+.hud-trophy-item.locked:hover {
+  opacity: 0.88;
+}
+
+/* Grade Badges */
+.trophy-badge-col {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 2px;
 }
 
 .trophy-grade-badge {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-sm);
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  min-width: 44px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
   font-weight: 800;
-  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  flex-shrink: 0;
 }
 
+/* Platinum (#00f3ff/silver) */
 .grade-platinum {
-  background: linear-gradient(135deg, #e5e9f0, #8892b0);
-  color: #0b0f19;
-  box-shadow: 0 0 10px rgba(229, 233, 240, 0.6);
+  background: rgba(0, 243, 255, 0.14);
+  color: #00f3ff;
+  border: 1px solid rgba(0, 243, 255, 0.45);
+  box-shadow: 0 0 10px rgba(0, 243, 255, 0.25);
 }
 
+/* Gold (#ffc700) */
 .grade-gold {
-  background: linear-gradient(135deg, #ffd700, #b8860b);
-  color: #0b0f19;
-  box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+  background: rgba(255, 199, 0, 0.14);
+  color: #ffc700;
+  border: 1px solid rgba(255, 199, 0, 0.45);
+  box-shadow: 0 0 10px rgba(255, 199, 0, 0.2);
 }
 
+/* Silver (#94a3b8) */
 .grade-silver {
-  background: linear-gradient(135deg, #c0c0c0, #708090);
-  color: #0b0f19;
+  background: rgba(148, 163, 184, 0.14);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.35);
 }
 
+/* Bronze (#d97706) */
 .grade-bronze {
-  background: linear-gradient(135deg, #cd7f32, #8b4513);
-  color: #fff;
+  background: rgba(217, 119, 6, 0.14);
+  color: #d97706;
+  border: 1px solid rgba(217, 119, 6, 0.4);
 }
 
+/* Trophy Content & Info */
 .trophy-info {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 5px;
+}
+
+.trophy-top-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .trophy-name {
   font-size: 0.88rem;
-  font-weight: 800;
-  color: #fff;
+  font-weight: 700;
+  color: #f1f5f9;
+  line-height: 1.3;
+  word-break: break-word;
 }
 
 .trophy-desc {
-  font-size: 0.75rem;
-  color: var(--text-muted);
+  font-size: 0.76rem;
+  color: var(--text-muted, #94a3b8);
+  line-height: 1.4;
+  word-break: break-word;
 }
 
+/* Status Badges: Unlocked vs Locked */
+.trophy-status-badge,
 .trophy-status-tag {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.68rem;
   font-weight: 700;
-  padding: 3px 8px;
-  border-radius: var(--radius-sm);
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
 }
 
-.tag-unlocked {
+.trophy-status-badge.status-unlocked,
+.trophy-status-tag.tag-unlocked {
   background: rgba(0, 240, 255, 0.12);
-  color: var(--cyan);
-  border: 1px solid var(--border-cyan);
+  color: var(--cyan, #00f0ff);
+  border: 1px solid var(--border-cyan, rgba(0, 240, 255, 0.3));
 }
 
-.tag-locked {
-  background: var(--bg-tertiary);
-  color: var(--text-faint);
+.trophy-status-badge.status-locked,
+.trophy-status-tag.tag-locked {
+  background: rgba(255, 255, 255, 0.04);
+  color: #64748b;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.trophy-status-icon {
+  flex-shrink: 0;
+}
+
+.trophy-status-icon.lock-icon {
+  opacity: 0.55;
+  color: #64748b;
+}
+
+/* Empty & Loading States */
+.hud-trophies-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 36px 16px;
+  background: rgba(18, 24, 36, 0.5);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--text-muted, #94a3b8);
+}
+
+.hud-trophies-empty .empty-icon {
+  font-size: 2rem;
+  margin-bottom: 8px;
+  opacity: 0.7;
+}
+
+.hud-trophies-empty .empty-title {
+  font-weight: 700;
+  color: #f1f5f9;
+  font-size: 0.95rem;
+  margin-bottom: 4px;
+}
+
+.hud-trophies-empty .empty-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted, #94a3b8);
+  max-width: 440px;
+  margin: 0 auto;
+  line-height: 1.4;
+}
+
+.hud-trophies-loading {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 44px 16px;
+  color: var(--text-muted, #94a3b8);
+  gap: 12px;
+  font-size: 0.85rem;
 }
 
 /* Share & Embed Modal */

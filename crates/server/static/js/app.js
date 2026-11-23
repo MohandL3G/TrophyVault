@@ -7,6 +7,34 @@ import { TrophyVaultApi, formatPlaytime, getOvrTier, normalizePlatform, generate
 
 const PREFS_STORAGE_KEY = 'trophyvault_web_settings';
 
+/**
+ * Format trophy unlock timestamp to localized human-readable date
+ * @param {number|string|null} ts
+ * @returns {string|null}
+ */
+function formatTrophyUnlockTime(ts) {
+  if (!ts) return null;
+  let dateObj = null;
+  if (typeof ts === 'number') {
+    const ms = ts > 1e11 ? ts : ts * 1000;
+    dateObj = new Date(ms);
+  } else if (typeof ts === 'string') {
+    const num = Number(ts);
+    if (!isNaN(num) && num > 0) {
+      const ms = num > 1e11 ? num : num * 1000;
+      dateObj = new Date(ms);
+    } else {
+      dateObj = new Date(ts);
+    }
+  }
+  if (!dateObj || isNaN(dateObj.getTime())) return null;
+  return dateObj.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
 class TrophyVaultApp {
   constructor() {
     this.api = new TrophyVaultApi();
@@ -799,9 +827,35 @@ class TrophyVaultApp {
   }
 
   /**
-   * Open Game Detail Modal
+   * Open Game Detail Modal and fetch trophy manifest
+   * @param {string|number|object} gameOrId - Game object or game identifier
    */
-  openGameModal(game) {
+  async openGameModal(gameOrId) {
+    let game = null;
+    let gameId = null;
+
+    if (typeof gameOrId === 'object' && gameOrId !== null) {
+      game = gameOrId;
+      gameId = game.id || game.appid;
+    } else if (typeof gameOrId === 'string' || typeof gameOrId === 'number') {
+      gameId = String(gameOrId);
+      game = this.games.find(g => String(g.id) === gameId || String(g.appid) === gameId) || null;
+    }
+
+    if (!game) {
+      game = {
+        id: gameId,
+        appid: gameId,
+        name: 'Game Details',
+        platform: 'Unknown',
+        playtime_minutes: 0,
+        pct: 0,
+        unlocked: 0,
+        total: 0,
+        trophies: []
+      };
+    }
+
     this.selectedModalGame = game;
     this.trophyFilter = 'all';
 
@@ -845,8 +899,77 @@ class TrophyVaultApp {
       this.dom.modalGameProgressFill.style.width = `${game.pct || 0}%`;
     }
 
-    this.renderModalTrophies();
+    // Open modal immediately
     this.openModal(this.dom.gameModal);
+
+    // Initial render or loading indicator
+    if (game.trophies && game.trophies.length > 0) {
+      this.renderModalTrophies();
+    } else {
+      if (this.dom.modalTrophiesList) {
+        this.dom.modalTrophiesList.innerHTML = `
+          <div class="hud-trophies-loading">
+            <div class="preview-spinner" style="width: 24px; height: 24px; border-width: 2px;"></div>
+            <span>Loading trophy manifest...</span>
+          </div>
+        `;
+      }
+    }
+
+    // Fetch individual trophies from GET /api/games/${gameId}/trophies
+    const lookupId = game.id || game.appid || gameId;
+    if (lookupId) {
+      try {
+        let res = await fetch(`/api/games/${encodeURIComponent(lookupId)}/trophies`, {
+          cache: 'no-store',
+          headers: { 'Accept': 'application/json' }
+        });
+
+        // Fallback to appid if lookupId was game.id and returned 404
+        if (!res.ok && res.status === 404 && game.appid && game.appid !== lookupId) {
+          res = await fetch(`/api/games/${encodeURIComponent(game.appid)}/trophies`, {
+            cache: 'no-store',
+            headers: { 'Accept': 'application/json' }
+          });
+        }
+
+        if (res.ok) {
+          const data = await res.json();
+          const trophies = Array.isArray(data) ? data : (data.trophies || []);
+          game.trophies = trophies;
+          game.trophiesLoaded = true;
+
+          // Update header stats with actual trophy counts if defined
+          if (trophies.length > 0) {
+            const unlockedCount = trophies.filter(t => Boolean(t.unlocked_time || t.unlocked)).length;
+            game.total = trophies.length;
+            game.unlocked = unlockedCount;
+            game.pct = Math.round((unlockedCount / trophies.length) * 100);
+            if (this.dom.modalGamePct) this.dom.modalGamePct.textContent = `${game.pct}%`;
+            if (this.dom.modalGameTrophies) this.dom.modalGameTrophies.textContent = `${game.unlocked} / ${game.total}`;
+            if (this.dom.modalGameProgressFill) this.dom.modalGameProgressFill.style.width = `${game.pct}%`;
+            if (this.dom.modalGameStatus) {
+              const isPlat = game.platinum === true || game.pct === 100;
+              this.dom.modalGameStatus.textContent = isPlat ? '100% Platinum' : (game.unlocked > 0 ? 'In Progress' : 'Not Started');
+              this.dom.modalGameStatus.style.color = isPlat ? 'var(--gold)' : 'var(--cyan)';
+            }
+          }
+        } else {
+          console.warn(`[TrophyVault] /api/games/${lookupId}/trophies returned HTTP ${res.status}`);
+          if (!game.trophies) game.trophies = [];
+        }
+      } catch (err) {
+        console.warn(`[TrophyVault] Error fetching trophies for ${lookupId}:`, err);
+        if (!game.trophies) game.trophies = [];
+      }
+    } else {
+      if (!game.trophies) game.trophies = [];
+    }
+
+    // Re-render modal trophies if this game is still the active modal
+    if (this.selectedModalGame && (this.selectedModalGame.id === game.id || this.selectedModalGame.appid === game.appid)) {
+      this.renderModalTrophies();
+    }
   }
 
   /**
@@ -857,7 +980,7 @@ class TrophyVaultApp {
     const game = this.selectedModalGame;
     const trophies = game.trophies || [];
 
-    const unlockedCount = trophies.filter(t => t.unlocked_time || t.unlocked).length;
+    const unlockedCount = trophies.filter(t => Boolean(t.unlocked_time || t.unlocked)).length;
     const lockedCount = trophies.length - unlockedCount;
 
     if (this.dom.countAllTrophies) this.dom.countAllTrophies.textContent = trophies.length;
@@ -866,11 +989,13 @@ class TrophyVaultApp {
 
     this.dom.modalTrophiesList.innerHTML = '';
 
+    // Empty state if title has no achievements or trophies defined
     if (trophies.length === 0) {
       this.dom.modalTrophiesList.innerHTML = `
-        <div style="text-align: center; padding: 32px 16px; color: var(--text-muted); background: var(--bg-secondary); border-radius: var(--radius-md);">
-          <p style="font-weight: 700; color: #fff; margin-bottom: 6px;">Trophy Manifest Not Loaded</p>
-          <p style="font-size: 0.8rem;">Individual trophy definitions for this title will populate upon running <code>TrophyVault --sync</code> with active credentials.</p>
+        <div class="hud-trophies-empty">
+          <div class="empty-icon">🏆</div>
+          <p class="empty-title">No Trophies Defined</p>
+          <p class="empty-desc">This title does not have any achievement or trophy manifest entries registered.</p>
         </div>
       `;
       return;
@@ -878,45 +1003,73 @@ class TrophyVaultApp {
 
     let filtered = trophies;
     if (this.trophyFilter === 'unlocked') {
-      filtered = trophies.filter(t => t.unlocked_time || t.unlocked);
+      filtered = trophies.filter(t => Boolean(t.unlocked_time || t.unlocked));
     } else if (this.trophyFilter === 'locked') {
       filtered = trophies.filter(t => !t.unlocked_time && !t.unlocked);
     }
 
+    // Filter empty state
     if (filtered.length === 0) {
       this.dom.modalTrophiesList.innerHTML = `
-        <div style="text-align: center; padding: 24px; color: var(--text-muted);">
-          No trophies match the selected filter.
+        <div class="hud-trophies-empty">
+          <p class="empty-title">No Trophies Found</p>
+          <p class="empty-desc">No trophies match the "${this.escapeHtml(this.trophyFilter)}" filter.</p>
         </div>
       `;
       return;
     }
 
     filtered.forEach(trophy => {
-      const isUnlocked = !!(trophy.unlocked_time || trophy.unlocked);
-      const grade = (trophy.grade || 'bronze').toLowerCase();
+      const isUnlocked = Boolean(trophy.unlocked_time || trophy.unlocked);
+      const rawGrade = (trophy.grade || 'Bronze').toLowerCase().trim();
 
-      const item = document.createElement('div');
-      item.className = `hud-trophy-item ${isUnlocked ? 'unlocked' : 'locked'}`;
+      let gradeClass = 'grade-bronze';
+      let gradeLabel = 'Bronze';
+      if (rawGrade.startsWith('p')) {
+        gradeClass = 'grade-platinum';
+        gradeLabel = 'Platinum';
+      } else if (rawGrade.startsWith('g')) {
+        gradeClass = 'grade-gold';
+        gradeLabel = 'Gold';
+      } else if (rawGrade.startsWith('s')) {
+        gradeClass = 'grade-silver';
+        gradeLabel = 'Silver';
+      } else {
+        gradeClass = 'grade-bronze';
+        gradeLabel = 'Bronze';
+      }
 
-      let gradeBadgeClass = 'grade-bronze';
-      let gradeLabel = 'BRZ';
-      if (grade === 'platinum') { gradeBadgeClass = 'grade-platinum'; gradeLabel = 'PLAT'; }
-      else if (grade === 'gold') { gradeBadgeClass = 'grade-gold'; gradeLabel = 'GLD'; }
-      else if (grade === 'silver') { gradeBadgeClass = 'grade-silver'; gradeLabel = 'SLV'; }
+      const formattedDate = formatTrophyUnlockTime(trophy.unlocked_time);
 
-      item.innerHTML = `
-        <div class="trophy-grade-badge ${gradeBadgeClass}">${gradeLabel}</div>
-        <div class="trophy-info">
-          <span class="trophy-name">${this.escapeHtml(trophy.name || 'Trophy')}</span>
-          <span class="trophy-desc">${this.escapeHtml(trophy.description || 'Achievement')}</span>
+      const card = document.createElement('div');
+      card.className = `hud-trophy-card hud-trophy-item ${isUnlocked ? 'unlocked' : 'locked'}`;
+
+      card.innerHTML = `
+        <div class="trophy-badge-col">
+          <div class="trophy-grade-badge ${gradeClass}" title="${gradeLabel} Trophy">${gradeLabel}</div>
         </div>
-        <span class="trophy-status-tag ${isUnlocked ? 'tag-unlocked' : 'tag-locked'}">
-          ${isUnlocked ? 'UNLOCKED' : 'LOCKED'}
-        </span>
+        <div class="trophy-info">
+          <div class="trophy-top-line">
+            <span class="trophy-name">${this.escapeHtml(trophy.name || trophy.title || 'Trophy')}</span>
+            <span class="trophy-status-badge ${isUnlocked ? 'status-unlocked' : 'status-locked'}">
+              ${isUnlocked ? `
+                <svg class="trophy-status-icon check-icon" viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                </svg>
+                <span>Unlocked${formattedDate ? ` (${formattedDate})` : ''}</span>
+              ` : `
+                <svg class="trophy-status-icon lock-icon" viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+                  <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+                </svg>
+                <span>Locked</span>
+              `}
+            </span>
+          </div>
+          <div class="trophy-desc">${this.escapeHtml(trophy.description || 'No description available')}</div>
+        </div>
       `;
 
-      this.dom.modalTrophiesList.appendChild(item);
+      this.dom.modalTrophiesList.appendChild(card);
     });
   }
 

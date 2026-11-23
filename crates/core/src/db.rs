@@ -73,6 +73,7 @@ pub fn init_db_schema(conn: &Connection) -> SqliteResult<()> {
             total INTEGER NOT NULL DEFAULT 0,
             pct INTEGER NOT NULL DEFAULT 0,
             platinum INTEGER NOT NULL DEFAULT 0,
+            base_playtime_minutes INTEGER NOT NULL DEFAULT 0,
             playtime_minutes INTEGER NOT NULL DEFAULT 0,
             last_played INTEGER,
             source TEXT NOT NULL DEFAULT '',
@@ -80,11 +81,12 @@ pub fn init_db_schema(conn: &Connection) -> SqliteResult<()> {
         );
 
         CREATE TABLE IF NOT EXISTS trophies (
-            id INTEGER NOT NULL,
             game_id TEXT NOT NULL,
+            id TEXT NOT NULL,
             name TEXT NOT NULL DEFAULT '',
             description TEXT NOT NULL DEFAULT '',
             grade TEXT NOT NULL DEFAULT '',
+            unlocked INTEGER NOT NULL DEFAULT 0,
             unlocked_time INTEGER,
             PRIMARY KEY (game_id, id)
         );
@@ -107,6 +109,11 @@ pub fn init_db_schema(conn: &Connection) -> SqliteResult<()> {
         CREATE INDEX IF NOT EXISTS idx_trophies_game_id ON trophies(game_id);
         ",
     )?;
+
+    // Backward-compatibility schema upgrades for existing SQLite databases
+    let _ = conn.execute("ALTER TABLE games ADD COLUMN base_playtime_minutes INTEGER NOT NULL DEFAULT 0;", []);
+    let _ = conn.execute("ALTER TABLE trophies ADD COLUMN unlocked INTEGER NOT NULL DEFAULT 0;", []);
+
     Ok(())
 }
 
@@ -222,13 +229,13 @@ pub fn save_library_database_to_sqlite(
     tx.execute("DELETE FROM games;", [])?;
     {
         let mut game_stmt = tx.prepare(
-            "INSERT OR REPLACE INTO games (id, name, platform, appid, unlocked, total, pct, platinum, playtime_minutes, last_played, source, last_scanned)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12);"
+            "INSERT OR REPLACE INTO games (id, name, platform, appid, unlocked, total, pct, platinum, playtime_minutes, last_played, source, last_scanned, base_playtime_minutes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13);"
         )?;
 
         let mut trophy_stmt = tx.prepare(
-            "INSERT OR REPLACE INTO trophies (id, game_id, name, description, grade, unlocked_time)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6);"
+            "INSERT OR REPLACE INTO trophies (game_id, id, name, description, grade, unlocked, unlocked_time)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);"
         )?;
 
         for game in db.games.values() {
@@ -245,16 +252,18 @@ pub fn save_library_database_to_sqlite(
                 game.last_played.map(|v| v as i64),
                 game.source,
                 game.last_scanned as i64,
+                game.base_playtime_minutes as i64,
             ])?;
 
             for trophy in &game.trophies {
                 trophy_stmt.execute(params![
-                    trophy.id as i64,
                     game.id,
+                    trophy.id,
                     trophy.name,
                     trophy.description,
                     trophy.grade,
-                    trophy.unlocked_time.map(|v| v as i64),
+                    if trophy.unlocked { 1i64 } else { 0i64 },
+                    trophy.unlocked_time,
                 ])?;
             }
         }
@@ -358,7 +367,7 @@ pub fn load_library_database_from_sqlite(
     let mut games: HashMap<String, SavedGameEntry> = HashMap::new();
     {
         let mut game_stmt = conn.prepare(
-            "SELECT id, name, platform, appid, unlocked, total, pct, platinum, playtime_minutes, last_played, source, last_scanned FROM games;"
+            "SELECT id, name, platform, appid, unlocked, total, pct, platinum, playtime_minutes, last_played, source, last_scanned, base_playtime_minutes FROM games;"
         )?;
         let rows = game_stmt.query_map([], |row| {
             Ok(SavedGameEntry {
@@ -374,6 +383,7 @@ pub fn load_library_database_from_sqlite(
                 last_played: row.get::<_, Option<i64>>(9)?.map(|v| v as u64),
                 source: row.get(10)?,
                 last_scanned: row.get::<_, i64>(11)? as u64,
+                base_playtime_minutes: row.get::<_, Option<i64>>(12)?.unwrap_or(0) as u32,
                 trophies: Vec::new(),
             })
         })?;
@@ -386,17 +396,18 @@ pub fn load_library_database_from_sqlite(
     // 4. Load trophies
     {
         let mut trophy_stmt = conn.prepare(
-            "SELECT id, game_id, name, description, grade, unlocked_time FROM trophies ORDER BY game_id, id;"
+            "SELECT game_id, id, name, description, grade, unlocked, unlocked_time FROM trophies ORDER BY game_id, id;"
         )?;
         let rows = trophy_stmt.query_map([], |row| {
             Ok((
-                row.get::<_, String>(1)?,
+                row.get::<_, String>(0)?,
                 SavedTrophy {
-                    id: row.get::<_, i64>(0)? as u32,
+                    id: row.get(1)?,
                     name: row.get(2)?,
                     description: row.get(3)?,
                     grade: row.get(4)?,
-                    unlocked_time: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+                    unlocked: row.get::<_, i64>(5)? != 0,
+                    unlocked_time: row.get(6)?,
                 },
             ))
         })?;
@@ -415,6 +426,89 @@ pub fn load_library_database_from_sqlite(
         manual_games,
         games,
     })
+}
+
+/// Query trophies for a specific game, ordered by unlocked desc, then id asc.
+pub fn get_trophies_for_game(conn: &Connection, game_id: &str) -> SqliteResult<Vec<SavedTrophy>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, description, grade, unlocked, unlocked_time FROM trophies WHERE game_id = ?1 ORDER BY unlocked DESC, id ASC;"
+    )?;
+    let rows = stmt.query_map(params![game_id], |row| {
+        Ok(SavedTrophy {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            description: row.get(2)?,
+            grade: row.get(3)?,
+            unlocked: row.get::<_, i64>(4)? != 0,
+            unlocked_time: row.get(5)?,
+        })
+    })?;
+    let mut trophies = Vec::new();
+    for r in rows {
+        trophies.push(r?);
+    }
+    Ok(trophies)
+}
+
+/// Persists a list of trophies for a specific game.
+pub fn save_trophies_for_game(conn: &Connection, game_id: &str, trophies: &[SavedTrophy]) -> SqliteResult<()> {
+    let mut stmt = conn.prepare(
+        "INSERT OR REPLACE INTO trophies (game_id, id, name, description, grade, unlocked, unlocked_time)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);"
+    )?;
+    for t in trophies {
+        stmt.execute(params![
+            game_id,
+            t.id,
+            t.name,
+            t.description,
+            t.grade,
+            if t.unlocked { 1i64 } else { 0i64 },
+            t.unlocked_time,
+        ])?;
+    }
+    Ok(())
+}
+
+/// Returns a map of all trophies grouped by game_id.
+pub fn get_all_trophies(conn: &Connection) -> SqliteResult<HashMap<String, Vec<SavedTrophy>>> {
+    let mut stmt = conn.prepare(
+        "SELECT game_id, id, name, description, grade, unlocked, unlocked_time FROM trophies ORDER BY game_id, id ASC;"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            SavedTrophy {
+                id: row.get(1)?,
+                name: row.get(2)?,
+                description: row.get(3)?,
+                grade: row.get(4)?,
+                unlocked: row.get::<_, i64>(5)? != 0,
+                unlocked_time: row.get(6)?,
+            },
+        ))
+    })?;
+    let mut map: HashMap<String, Vec<SavedTrophy>> = HashMap::new();
+    for r in rows {
+        let (game_id, trophy) = r?;
+        map.entry(game_id).or_default().push(trophy);
+    }
+    Ok(map)
+}
+
+/// Returns total trophy count and unlocked trophy count for a game.
+pub fn get_trophy_stats_for_game(conn: &Connection, game_id: &str) -> SqliteResult<(usize, usize)> {
+    let total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM trophies WHERE game_id = ?1;",
+        params![game_id],
+        |r| r.get(0),
+    )?;
+    let unlocked: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM trophies WHERE game_id = ?1 AND unlocked != 0;",
+        params![game_id],
+        |r| r.get(0),
+    )?;
+    Ok((total as usize, unlocked as usize))
 }
 
 /// Migrates data from an existing `library_database.json` file into the SQLite database at `db_path`.
@@ -468,23 +562,26 @@ mod tests {
                 total: 54,
                 pct: 100,
                 platinum: true,
+                base_playtime_minutes: 0,
                 playtime_minutes: 14500,
                 last_played: Some(1732000000),
                 source: "steam".to_string(),
                 last_scanned: 1732000100,
                 trophies: vec![
                     SavedTrophy {
-                        id: 1,
+                        id: "1".to_string(),
                         name: "All's Well That Ends Well".to_string(),
                         description: "Complete the game".to_string(),
                         grade: "Gold".to_string(),
+                        unlocked: true,
                         unlocked_time: Some(1732000050),
                     },
                     SavedTrophy {
-                        id: 2,
+                        id: "2".to_string(),
                         name: "Absolute Power".to_string(),
                         description: "Take control of the Netherbrain".to_string(),
                         grade: "Silver".to_string(),
+                        unlocked: true,
                         unlocked_time: Some(1731999900),
                     },
                 ],
@@ -502,15 +599,17 @@ mod tests {
                 total: 40,
                 pct: 100,
                 platinum: true,
+                base_playtime_minutes: 0,
                 playtime_minutes: 8400,
                 last_played: Some(1732100000),
                 source: "manual".to_string(),
                 last_scanned: 1732100500,
                 trophies: vec![SavedTrophy {
-                    id: 1,
+                    id: "1".to_string(),
                     name: "Bloodborne".to_string(),
                     description: "All trophies acquired".to_string(),
                     grade: "Platinum".to_string(),
+                    unlocked: true,
                     unlocked_time: Some(1732100400),
                 }],
             },
@@ -734,5 +833,45 @@ mod tests {
         assert_eq!(get_game_count(&conn).unwrap(), 1);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_trophies_query_helpers() {
+        let conn = open_in_memory_db().unwrap();
+        let trophies = vec![
+            SavedTrophy {
+                id: "0".to_string(),
+                name: "Bloodborne".to_string(),
+                description: "All trophies acquired".to_string(),
+                grade: "Platinum".to_string(),
+                unlocked: true,
+                unlocked_time: Some(1730000000),
+            },
+            SavedTrophy {
+                id: "1".to_string(),
+                name: "Yharnam Sunrise".to_string(),
+                description: "You lived through the hunt".to_string(),
+                grade: "Gold".to_string(),
+                unlocked: false,
+                unlocked_time: None,
+            },
+        ];
+
+        save_trophies_for_game(&conn, "bloodborne", &trophies).unwrap();
+
+        let queried = get_trophies_for_game(&conn, "bloodborne").unwrap();
+        assert_eq!(queried.len(), 2);
+        // Unlocked should be first due to ORDER BY unlocked DESC
+        assert_eq!(queried[0].id, "0");
+        assert!(queried[0].unlocked);
+        assert_eq!(queried[1].id, "1");
+        assert!(!queried[1].unlocked);
+
+        let stats = get_trophy_stats_for_game(&conn, "bloodborne").unwrap();
+        assert_eq!(stats, (2, 1)); // (total, unlocked)
+
+        let all = get_all_trophies(&conn).unwrap();
+        assert!(all.contains_key("bloodborne"));
+        assert_eq!(all["bloodborne"].len(), 2);
     }
 }

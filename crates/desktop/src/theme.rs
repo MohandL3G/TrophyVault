@@ -10,16 +10,19 @@ pub const COLOR_CARD_BG: Color32 = Color32::from_rgb(0x16, 0x1f, 0x30);         
 pub const COLOR_BORDER_SLATE: Color32 = Color32::from_rgb(0x1e, 0x29, 0x3b);    // #1e293b Slate border
 pub const COLOR_ACCENT_CYAN: Color32 = Color32::from_rgb(0x00, 0xf3, 0xff);     // #00f3ff Neon cyan accent
 pub const COLOR_ACCENT_GOLD: Color32 = Color32::from_rgb(0xff, 0xc7, 0x00);     // #ffc700 Gold accent
+pub const COLOR_WHITE: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);           // #ffffff Crisp white
 pub const COLOR_TEXT_PRIMARY: Color32 = Color32::from_rgb(0xf1, 0xf5, 0xf9);    // #f1f5f9 Primary text
-pub const COLOR_TEXT_SECONDARY: Color32 = Color32::from_rgb(0x94, 0xa3, 0xb8);  // #94a3b8 Secondary text
+pub const COLOR_TEXT_SECONDARY: Color32 = Color32::from_rgb(0x94, 0xa3, 0xb8);  // #94a3b8 Secondary text (muted slate)
 pub const COLOR_TEXT_MUTED: Color32 = Color32::from_rgb(0x64, 0x74, 0x8b);      // #64748b Muted text
 pub const COLOR_SUCCESS_GREEN: Color32 = Color32::from_rgb(0x10, 0xb9, 0x81);   // #10b981 Green success
 pub const COLOR_ERROR_RED: Color32 = Color32::from_rgb(0xef, 0x44, 0x44);       // #ef4444 Red error
 
-// Pill / Glow active highlight fills
-pub const COLOR_CYAN_PILL_BG: Color32 = Color32::from_rgba_premultiplied(0, 243, 255, 28);
+// Pill / Glow active highlight fills (explicit dark glass RGB for crisp contrast & no blending artifacts)
+pub const COLOR_CYAN_PILL_BG: Color32 = Color32::from_rgb(0x10, 0x32, 0x4a); // #10324a Rich dark cyan glass
 #[allow(dead_code)]
-pub const COLOR_CYAN_GLOW: Color32 = Color32::from_rgba_premultiplied(0, 243, 255, 60);
+pub const COLOR_CYAN_GLOW: Color32 = Color32::from_rgb(0x0c, 0x24, 0x36);
+pub const COLOR_GOLD_PILL_BG: Color32 = Color32::from_rgb(0x38, 0x2a, 0x08); // #382a08 Rich dark gold glass
+pub const COLOR_HOVER_BG: Color32 = Color32::from_rgb(0x18, 0x22, 0x32);     // #182232 Hovered state fill
 
 /// Generates the complete Cyberpunk Dark HUD visuals for egui.
 pub fn cyberpunk_visuals() -> Visuals {
@@ -59,8 +62,8 @@ pub fn cyberpunk_visuals() -> Visuals {
     visuals.widgets.inactive.rounding = default_rounding;
 
     // Hovered widgets
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(0x1a, 0x24, 0x36);
-    visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x1a, 0x24, 0x36);
+    visuals.widgets.hovered.bg_fill = COLOR_HOVER_BG;
+    visuals.widgets.hovered.weak_bg_fill = COLOR_HOVER_BG;
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, COLOR_ACCENT_CYAN);
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.5_f32, COLOR_TEXT_PRIMARY);
     visuals.widgets.hovered.rounding = default_rounding;
@@ -100,7 +103,30 @@ pub fn card_frame() -> egui::Frame {
         .inner_margin(Margin::same(12.0_f32))
 }
 
-/// Left sidebar container frame with obsidian fill and slate border right.
+/// Hero telemetry stat card frame with optional glowing accent border.
+pub fn hero_stat_frame(accent_border: Option<Color32>) -> egui::Frame {
+    let stroke = match accent_border {
+        Some(c) => Stroke::new(1.5_f32, c),
+        None => Stroke::new(1.0_f32, COLOR_BORDER_SLATE),
+    };
+    egui::Frame::none()
+        .fill(COLOR_CARD_BG)
+        .stroke(stroke)
+        .rounding(Rounding::same(8.0_f32))
+        .inner_margin(Margin::symmetric(10.0_f32, 8.0_f32))
+}
+
+/// 100% completion card frame with glowing gold border.
+#[allow(dead_code)]
+pub fn gold_card_frame() -> egui::Frame {
+    egui::Frame::none()
+        .fill(COLOR_CARD_BG)
+        .stroke(Stroke::new(1.5_f32, COLOR_ACCENT_GOLD))
+        .rounding(Rounding::same(10.0_f32))
+        .inner_margin(Margin::same(12.0_f32))
+}
+
+/// Left sidebar container frame with panel fill and slate border right.
 pub fn sidebar_frame() -> egui::Frame {
     egui::Frame::none()
         .fill(COLOR_PANEL_BG)
@@ -108,12 +134,12 @@ pub fn sidebar_frame() -> egui::Frame {
         .inner_margin(Margin::symmetric(14.0_f32, 16.0_f32))
 }
 
-/// Active nav button pill frame with neon cyan accent border and subtle glow.
+/// Active nav button pill frame with neon cyan accent border and sleek translucent glass fill.
 #[allow(dead_code)]
 pub fn active_nav_pill_frame() -> egui::Frame {
     egui::Frame::none()
         .fill(COLOR_CYAN_PILL_BG)
-        .stroke(Stroke::new(1.0_f32, COLOR_ACCENT_CYAN))
+        .stroke(Stroke::new(1.5_f32, COLOR_ACCENT_CYAN))
         .rounding(Rounding::same(8.0_f32))
         .inner_margin(Margin::symmetric(12.0_f32, 8.0_f32))
 }

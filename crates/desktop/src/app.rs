@@ -3,42 +3,41 @@
 #[path = "theme.rs"]
 pub mod theme;
 
-use trophyvault_core::data::{AchievementsData, GameItem};
-use trophyvault_core::generator::{
-    generate_passport_svg, render_svg_to_pixmap, PassportOptions, PassportTheme,
-};
+use trophyvault_core::data::AchievementsData;
+use trophyvault_core::generator::PassportTheme;
 use trophyvault_core::storage::{
-    database_to_achievements_data, get_database_path_for_user,
-    load_or_create_database_for_user, purge_remote_database, restore_from_remote, save_database,
-    sync_library, sync_to_remote_with_mode, LibraryDatabase, ManualGameSetting,
-    SyncMode, SyncSettings,
+    database_to_achievements_data, get_database_path_for_user, load_or_create_database_for_user,
+    purge_remote_database, restore_from_remote, save_database, sync_library,
+    sync_to_remote_with_mode, LibraryDatabase, ManualGameSetting, SyncMode, SyncSettings,
 };
 use trophyvault_core::steam::{
     detect_steam_users, find_active_steam_id, find_steam_dir, parse_non_steam_shortcuts,
     NonSteamShortcut, SteamUserAccount,
 };
 use eframe::egui;
-use std::fs;
-use std::path::PathBuf;
 
 #[allow(dead_code)]
 pub type TrophyVaultApp = PassportApp;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum AppTab {
-    PassportCanvas,
+    #[default]
     LibraryStats,
     BloodbornePort,
     CloudSync,
     Settings,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum PassportMode {
-    Overall,
-    SingleGame,
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+pub enum PlatformFilter {
+    #[default]
+    All,
+    Steam,
+    Ports,
+    Perfect100Only,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum DbSortColumn {
     Title,
@@ -67,14 +66,10 @@ pub struct PassportApp {
     custom_steam_id_input: String,
     show_custom_id_popup: bool,
 
-    // Options for Canvas
-    mode: PassportMode,
-    selected_game_name: String,
-    game_search_query: String,
+    // Player Preferences & Defaults
     username: String,
     title_line: String,
     theme: PassportTheme,
-    output_path: PathBuf,
 
     // Add Custom Game Form
     new_game_name: String,
@@ -83,16 +78,15 @@ pub struct PassportApp {
     new_game_parser: String,
     detected_shortcuts: Vec<NonSteamShortcut>,
 
-    // Database Manager search & cached keys
+    // Database / Library & Stats Toolbar State
     db_search_query: String,
     cached_db_keys: Vec<String>,
     db_sort_col: DbSortColumn,
     db_sort_dir: SortDirection,
+    platform_filter: PlatformFilter,
 
-    // Feedback & Preview
+    // Feedback & Notifications
     status_notification: Option<(String, bool)>, // (message, is_error)
-    preview_texture: Option<egui::TextureHandle>,
-    last_rendered_svg: Option<String>,
 
     // Cloud Sync UI state
     show_api_key_plaintext: bool,
@@ -149,36 +143,19 @@ impl PassportApp {
             _ => PassportTheme::CyberpunkCyan,
         };
 
-        let default_output = db
-            .preferences
-            .export_path
-            .as_deref()
-            .map(PathBuf::from)
-            .filter(|p| !p.ends_with("achievements_passport.png"))
-            .unwrap_or_else(|| {
-                dirs::picture_dir()
-                    .or_else(dirs::desktop_dir)
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join("TrophyVault.png")
-            });
-
         let mut app = Self {
             db,
             data: None,
-            active_tab: AppTab::PassportCanvas,
+            active_tab: AppTab::LibraryStats, // Default showcase tab!
 
             detected_users,
             current_steam_id: initial_steam_id,
             custom_steam_id_input: String::new(),
             show_custom_id_popup: false,
 
-            mode: PassportMode::Overall,
-            selected_game_name: "Bloodborne".to_string(),
-            game_search_query: String::new(),
             username,
             title_line,
             theme,
-            output_path: default_output,
 
             new_game_name: "Bloodborne".to_string(),
             new_game_dir: r"C:\Games\Decomps\Bloodborne\user".to_string(),
@@ -188,12 +165,11 @@ impl PassportApp {
 
             db_search_query: String::new(),
             cached_db_keys: Vec::new(),
-            db_sort_col: DbSortColumn::Progress,
+            db_sort_col: DbSortColumn::Playtime,
             db_sort_dir: SortDirection::Descending,
+            platform_filter: PlatformFilter::All,
 
             status_notification: None,
-            preview_texture: None,
-            last_rendered_svg: None,
 
             show_api_key_plaintext: false,
             cloud_sync_status_msg: None,
@@ -206,8 +182,12 @@ impl PassportApp {
         }
 
         app.rebuild_cached_db_keys();
-        app.refresh_data_and_preview(&cc.egui_ctx);
+        app.refresh_data();
         app
+    }
+
+    fn refresh_data(&mut self) {
+        self.data = Some(database_to_achievements_data(&self.db));
     }
 
     fn rebuild_cached_db_keys(&mut self) {
@@ -243,18 +223,7 @@ impl PassportApp {
         self.cached_db_keys = keys;
     }
 
-    fn refresh_data_and_preview(&mut self, ctx: &egui::Context) {
-        let data = database_to_achievements_data(&self.db);
-        if self.selected_game_name.is_empty() {
-            if let Some(first) = data.games.first() {
-                self.selected_game_name = first.name.clone();
-            }
-        }
-        self.data = Some(data);
-        self.generate_and_render_preview(ctx);
-    }
-
-    fn run_sync(&mut self, ctx: &egui::Context) {
+    fn run_sync(&mut self, _ctx: &egui::Context) {
         let report = sync_library(&mut self.db);
         self.status_notification = Some((
             format!(
@@ -264,113 +233,7 @@ impl PassportApp {
             false,
         ));
         self.rebuild_cached_db_keys();
-        self.refresh_data_and_preview(ctx);
-    }
-
-    fn selected_game(&self) -> Option<&GameItem> {
-        let data = self.data.as_ref()?;
-        data.games.iter().find(|g| g.name == self.selected_game_name)
-    }
-
-    fn generate_svg(&self) -> Option<String> {
-        let data = self.data.as_ref()?;
-        let selected_game = if self.mode == PassportMode::SingleGame {
-            self.selected_game()
-        } else {
-            None
-        };
-
-        let options = PassportOptions {
-            username: &self.username,
-            title: &self.title_line,
-            theme: self.theme,
-            selected_game,
-        };
-
-        Some(generate_passport_svg(data, &options))
-    }
-
-    fn generate_and_render_preview(&mut self, ctx: &egui::Context) {
-        if let Some(svg) = self.generate_svg() {
-            self.last_rendered_svg = Some(svg.clone());
-            // Zero-copy render directly from tiny_skia Pixmap buffer into egui texture
-            match render_svg_to_pixmap(&svg, 1200, 850) {
-                Ok(pixmap) => {
-                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                        [1200, 850],
-                        pixmap.data(),
-                    );
-                    self.preview_texture = Some(ctx.load_texture(
-                        "passport_preview",
-                        color_image,
-                        egui::TextureOptions::LINEAR,
-                    ));
-                }
-                Err(err) => {
-                    self.status_notification = Some((format!("Render error: {}", err), true));
-                }
-            }
-        }
-    }
-
-    fn save_png(&mut self, ctx: &egui::Context) {
-        if let Some(svg) = self.generate_svg() {
-            self.last_rendered_svg = Some(svg.clone());
-            match render_svg_to_pixmap(&svg, 1200, 850) {
-                Ok(pixmap) => {
-                    match pixmap.encode_png() {
-                        Ok(bytes) => {
-                            if let Some(parent) = self.output_path.parent() {
-                                let _ = fs::create_dir_all(parent);
-                            }
-                            if let Err(e) = fs::write(&self.output_path, bytes) {
-                                self.status_notification =
-                                    Some((format!("Failed to save image: {}", e), true));
-                            } else {
-                                self.status_notification = Some((
-                                    format!("✓ Passport saved to: {}", self.output_path.display()),
-                                    false,
-                                ));
-                            }
-                        }
-                        Err(e) => {
-                            self.status_notification =
-                                Some((format!("PNG Encode Error: {}", e), true));
-                        }
-                    }
-
-                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                        [1200, 850],
-                        pixmap.data(),
-                    );
-                    self.preview_texture = Some(ctx.load_texture(
-                        "passport_preview",
-                        color_image,
-                        egui::TextureOptions::LINEAR,
-                    ));
-                }
-                Err(err) => {
-                    self.status_notification = Some((format!("Render error: {}", err), true));
-                }
-            }
-        }
-    }
-
-    fn save_svg(&mut self) {
-        if let Some(svg) = self.generate_svg() {
-            let svg_path = self.output_path.with_extension("svg");
-            if let Some(parent) = svg_path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            if let Err(e) = fs::write(&svg_path, svg) {
-                self.status_notification = Some((format!("Failed to save SVG: {}", e), true));
-            } else {
-                self.status_notification = Some((
-                    format!("✓ Vector SVG saved to: {}", svg_path.display()),
-                    false,
-                ));
-            }
-        }
+        self.refresh_data();
     }
 
     pub fn current_account_display_name(&self) -> String {
@@ -385,7 +248,7 @@ impl PassportApp {
         }
     }
 
-    pub fn switch_user_profile(&mut self, new_steam_id: Option<String>, ctx: &egui::Context) {
+    pub fn switch_user_profile(&mut self, new_steam_id: Option<String>, _ctx: &egui::Context) {
         if self.current_steam_id == new_steam_id {
             return;
         }
@@ -422,16 +285,12 @@ impl PassportApp {
             _ => PassportTheme::CyberpunkCyan,
         };
 
-        if let Some(p) = &self.db.preferences.export_path {
-            self.output_path = PathBuf::from(p);
-        }
-
         // 4. Sync library for new profile
         let report = sync_library(&mut self.db);
 
-        // 5. Rebuild cached keys & refresh preview
+        // 5. Rebuild cached keys & refresh data
         self.rebuild_cached_db_keys();
-        self.refresh_data_and_preview(ctx);
+        self.refresh_data();
 
         let display_name = self.current_account_display_name();
         self.status_notification = Some((
@@ -547,7 +406,7 @@ impl PassportApp {
     }
 
     /// Invokes `restore_from_remote` on storage to hydrate historical library & playtime on a fresh install.
-    pub fn trigger_restore_from_remote(&mut self, ctx: &egui::Context) {
+    pub fn trigger_restore_from_remote(&mut self, _ctx: &egui::Context) {
         let settings = match &self.db.preferences.sync_settings {
             Some(s) => s.clone(),
             None => {
@@ -569,7 +428,7 @@ impl PassportApp {
             Ok(resp_msg) => {
                 let _ = save_database(&self.db);
                 self.rebuild_cached_db_keys();
-                self.refresh_data_and_preview(ctx);
+                self.refresh_data();
                 let ok_msg = format!("✓ Restored from Cloud: {}", resp_msg);
                 self.status_notification = Some((ok_msg.clone(), false));
                 self.cloud_sync_status_msg = Some((ok_msg, false));
@@ -641,9 +500,8 @@ impl eframe::App for PassportApp {
         // Layout 1: Vertical Sidebar on the Left (~240px wide)
         self.render_left_sidebar(ctx);
 
-        // Right Area: Main Canvas / View for the Selected Tab
+        // Right Area: Main View for the Selected Tab
         match self.active_tab {
-            AppTab::PassportCanvas => self.show_canvas_tab(ctx),
             AppTab::LibraryStats => self.show_database_tab(ctx),
             AppTab::BloodbornePort => self.show_custom_games_tab(ctx),
             AppTab::CloudSync => self.render_cloud_sync_tab(ctx),
@@ -709,10 +567,7 @@ impl PassportApp {
                     );
                     ui.add_space(8.0);
 
-                    // Vertical Navigation Buttons
-                    if self.render_nav_item(ui, "📇", "Passport Canvas", self.active_tab == AppTab::PassportCanvas) {
-                        self.active_tab = AppTab::PassportCanvas;
-                    }
+                    // Vertical Navigation Buttons (4 Tabs)
                     if self.render_nav_item(ui, "📚", "Library & Stats", self.active_tab == AppTab::LibraryStats) {
                         self.active_tab = AppTab::LibraryStats;
                     }
@@ -737,16 +592,16 @@ impl PassportApp {
             });
     }
 
-    /// Helper to render stacked navigation buttons with cyan accent glow/pill background when active.
+    /// Helper to render stacked navigation buttons with sleek translucent cyan glass pill and crisp white/cyan text.
     fn render_nav_item(&self, ui: &mut egui::Ui, icon: &str, title: &str, is_active: bool) -> bool {
-        let desired_size = egui::vec2(ui.available_width(), 38.0);
+        let desired_size = egui::vec2(ui.available_width(), 42.0);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
         let is_hovered = response.hovered();
 
         let bg_color = if is_active {
             theme::COLOR_CYAN_PILL_BG
         } else if is_hovered {
-            egui::Color32::from_rgb(26, 36, 52)
+            theme::COLOR_HOVER_BG
         } else {
             egui::Color32::TRANSPARENT
         };
@@ -761,40 +616,58 @@ impl PassportApp {
 
         ui.painter().rect(rect, egui::Rounding::same(8.0_f32), bg_color, stroke);
 
+        // Active indicator left bar
+        if is_active {
+            ui.painter().line_segment(
+                [
+                    egui::pos2(rect.min.x + 3.0, rect.min.y + 10.0),
+                    egui::pos2(rect.min.x + 3.0, rect.max.y - 10.0),
+                ],
+                egui::Stroke::new(3.0_f32, theme::COLOR_ACCENT_CYAN),
+            );
+        }
+
+        // Active: crisp white text with glowing cyan icon. Inactive: muted slate text #94a3b8.
         let text_color = if is_active {
-            theme::COLOR_ACCENT_CYAN
+            theme::COLOR_WHITE
         } else if is_hovered {
             theme::COLOR_TEXT_PRIMARY
         } else {
             theme::COLOR_TEXT_SECONDARY
         };
 
-        let content_rect = rect.shrink2(egui::vec2(12.0_f32, 0.0_f32));
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(content_rect), |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.label(
-                    egui::RichText::new(icon)
-                        .size(15.0)
-                        .color(if is_active { theme::COLOR_ACCENT_CYAN } else { theme::COLOR_TEXT_MUTED }),
-                );
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new(title)
-                        .size(13.0)
-                        .strong()
-                        .color(text_color),
-                );
-            });
-        });
+        let icon_color = if is_active {
+            theme::COLOR_ACCENT_CYAN
+        } else if is_hovered {
+            theme::COLOR_TEXT_PRIMARY
+        } else {
+            theme::COLOR_TEXT_MUTED
+        };
 
-        ui.add_space(3.0);
+        // Render directly with painter for perfect contrast and no child widget click-stealing
+        ui.painter().text(
+            egui::pos2(rect.min.x + 16.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            icon,
+            egui::FontId::proportional(16.0),
+            icon_color,
+        );
+        ui.painter().text(
+            egui::pos2(rect.min.x + 44.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            title,
+            egui::FontId::proportional(13.5),
+            text_color,
+        );
+
+        ui.add_space(4.0);
         response.clicked()
     }
 
-    /// Renders the gamer profile card at the bottom of the sidebar.
+    /// Renders the gamer profile card at the bottom of the sidebar with avatar circle/initial chip.
     fn render_gamer_profile_card(&mut self, ui: &mut egui::Ui) {
         let ovr_score = self.data.as_ref().map(|d| d.stats.ovr_score).unwrap_or(0);
-        let total_games = self.data.as_ref().map(|d| d.stats.total_configs).unwrap_or(0);
+        let total_games = self.data.as_ref().map(|d| d.stats.total_configs).unwrap_or(self.db.games.len() as u32);
 
         let (dot_color, sync_tooltip) = match &self.db.preferences.sync_settings {
             Some(s) if s.last_sync_status.as_deref().map(|st| st.starts_with("Success")).unwrap_or(false) => {
@@ -806,17 +679,38 @@ impl PassportApp {
             _ => (theme::COLOR_TEXT_MUTED, "Cloud Sync: Idle / Unconfigured"),
         };
 
+        let initial = self
+            .username
+            .chars()
+            .next()
+            .unwrap_or('M')
+            .to_uppercase()
+            .to_string();
+
         let card_frame = theme::card_frame();
         let desired_width = ui.available_width();
 
         let response = card_frame.show(ui, |ui| {
             ui.set_width(desired_width);
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("🎮")
-                        .size(20.0)
-                        .color(theme::COLOR_ACCENT_CYAN),
+                // Avatar circle chip with glowing cyan border
+                let chip_size = egui::vec2(34.0, 34.0);
+                let (chip_rect, _) = ui.allocate_exact_size(chip_size, egui::Sense::hover());
+                ui.painter().rect(
+                    chip_rect,
+                    egui::Rounding::same(17.0_f32),
+                    theme::COLOR_BG_OBSIDIAN,
+                    egui::Stroke::new(1.5_f32, theme::COLOR_ACCENT_CYAN),
                 );
+                let initial_pos = chip_rect.center() - egui::vec2(0.0, 1.0);
+                ui.painter().text(
+                    initial_pos,
+                    egui::Align2::CENTER_CENTER,
+                    &initial,
+                    egui::FontId::proportional(14.0),
+                    theme::COLOR_ACCENT_CYAN,
+                );
+
                 ui.add_space(4.0);
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
@@ -824,21 +718,41 @@ impl PassportApp {
                             egui::RichText::new(&self.username)
                                 .size(13.0)
                                 .strong()
-                                .color(theme::COLOR_TEXT_PRIMARY),
+                                .color(theme::COLOR_WHITE),
                         );
-                        ui.add_space(3.0);
+                        ui.add_space(2.0);
                         ui.label(
                             egui::RichText::new("●")
-                                .size(11.0)
+                                .size(10.0)
                                 .color(dot_color),
                         )
                         .on_hover_text(sync_tooltip);
                     });
-                    ui.label(
-                        egui::RichText::new(format!("{} OVR • {} Games", ovr_score, total_games))
-                            .size(11.0)
-                            .color(theme::COLOR_ACCENT_GOLD),
-                    );
+
+                    ui.horizontal(|ui| {
+                        // OVR score pill
+                        let pill_frame = egui::Frame::none()
+                            .fill(theme::COLOR_GOLD_PILL_BG)
+                            .stroke(egui::Stroke::new(1.0_f32, theme::COLOR_ACCENT_GOLD))
+                            .rounding(egui::Rounding::same(4.0_f32))
+                            .inner_margin(egui::Margin::symmetric(4.0_f32, 1.0_f32));
+
+                        pill_frame.show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{} OVR", ovr_score))
+                                    .size(9.5)
+                                    .strong()
+                                    .color(theme::COLOR_ACCENT_GOLD),
+                            );
+                        });
+
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new(format!("{} Games", total_games))
+                                .size(10.5)
+                                .color(theme::COLOR_TEXT_SECONDARY),
+                        );
+                    });
                 });
             });
         }).response;
@@ -887,299 +801,15 @@ impl PassportApp {
         }
     }
 
-    // --- TAB: Passport Canvas ---
-    fn show_canvas_tab(&mut self, ctx: &egui::Context) {
-        let mut selection_changed = false;
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_notification_bar(ui);
-
-            ui.horizontal(|ui| {
-                // Left Column: Controls (Mode, Themes, Player, Export)
-                ui.allocate_ui_with_layout(
-                    egui::vec2(340.0, ui.available_height()),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("canvas_ctrl_scroll")
-                            .show(ui, |ui| {
-                                ui.add_space(4.0);
-
-                                // PASSPORT MODE
-                                theme::card_frame().show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.label(
-                                        egui::RichText::new("🎯 Passport Mode")
-                                            .strong()
-                                            .color(theme::COLOR_ACCENT_CYAN),
-                                    );
-                                    ui.add_space(4.0);
-                                    ui.horizontal(|ui| {
-                                        let r1 = ui.radio_value(
-                                            &mut self.mode,
-                                            PassportMode::Overall,
-                                            "Overall Library",
-                                        );
-                                        let r2 = ui.radio_value(
-                                            &mut self.mode,
-                                            PassportMode::SingleGame,
-                                            "Single Game",
-                                        );
-                                        if r1.changed() || r2.changed() {
-                                            selection_changed = true;
-                                        }
-                                    });
-
-                                    if self.mode == PassportMode::SingleGame {
-                                        ui.add_space(6.0);
-                                        ui.label("Search Game:");
-                                        ui.text_edit_singleline(&mut self.game_search_query);
-
-                                        if let Some(data) = &self.data {
-                                            let query = self.game_search_query.to_lowercase();
-                                            let filtered_games: Vec<String> = data
-                                                .games
-                                                .iter()
-                                                .filter(|g| query.is_empty() || g.name.to_lowercase().contains(&query))
-                                                .map(|g| g.name.clone())
-                                                .collect();
-
-                                            let mut chosen_game = None;
-                                            egui::ComboBox::from_label("Game")
-                                                .selected_text(&self.selected_game_name)
-                                                .show_ui(ui, |ui| {
-                                                    for game_name in filtered_games.iter().take(40) {
-                                                        let is_selected = self.selected_game_name == *game_name;
-                                                        if ui.selectable_label(is_selected, game_name).clicked() {
-                                                            chosen_game = Some(game_name.clone());
-                                                        }
-                                                    }
-                                                });
-
-                                            if let Some(game_name) = chosen_game {
-                                                self.selected_game_name = game_name;
-                                                selection_changed = true;
-                                            }
-
-                                            if let Some(game) = self.selected_game() {
-                                                ui.add_space(6.0);
-                                                let playtime_display = format!(
-                                                    "{}h {}m",
-                                                    game.playtime_minutes / 60,
-                                                    game.playtime_minutes % 60
-                                                );
-                                                ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "⏱ Playtime: {} • 🏆 Achievements: {}/{} ({}%)",
-                                                        playtime_display, game.unlocked, game.total, game.pct
-                                                    ))
-                                                    .size(11.0)
-                                                    .color(theme::COLOR_ACCENT_CYAN),
-                                                );
-                                            }
-                                        }
-                                    }
-                                });
-
-                                ui.add_space(8.0);
-
-                                // VISUAL THEME
-                                theme::card_frame().show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.label(
-                                        egui::RichText::new("🎨 Visual Theme")
-                                            .strong()
-                                            .color(theme::COLOR_ACCENT_CYAN),
-                                    );
-                                    ui.add_space(4.0);
-
-                                    let mut chosen_theme = None;
-                                    egui::ComboBox::from_label("Preset")
-                                        .selected_text(self.theme.name())
-                                        .show_ui(ui, |ui| {
-                                            for t in PassportTheme::all() {
-                                                let is_selected = self.theme == t;
-                                                if ui.selectable_label(is_selected, t.name()).clicked() {
-                                                    chosen_theme = Some(t);
-                                                }
-                                            }
-                                        });
-
-                                    if let Some(t) = chosen_theme {
-                                        self.theme = t;
-                                        self.db.preferences.theme = match t {
-                                            PassportTheme::TrophyGold => "TrophyGold".into(),
-                                            PassportTheme::BloodborneCrimson => "BloodborneCrimson".into(),
-                                            PassportTheme::EmeraldMatrix => "EmeraldMatrix".into(),
-                                            PassportTheme::SteamPurple => "SteamPurple".into(),
-                                            _ => "CyberpunkCyan".into(),
-                                        };
-                                        let _ = save_database(&self.db);
-                                        selection_changed = true;
-                                    }
-                                });
-
-                                ui.add_space(8.0);
-
-                                // PLAYER PROFILE DETAILS
-                                theme::card_frame().show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.label(
-                                        egui::RichText::new("👤 Player Tag & Subtitle")
-                                            .strong()
-                                            .color(theme::COLOR_ACCENT_CYAN),
-                                    );
-                                    ui.add_space(4.0);
-
-                                    ui.label("Player Tag / Username:");
-                                    let user_res = ui.text_edit_singleline(&mut self.username);
-                                    if user_res.changed() {
-                                        selection_changed = true;
-                                    }
-                                    if user_res.lost_focus() {
-                                        self.db.preferences.username = self.username.clone();
-                                        let _ = save_database(&self.db);
-                                    }
-
-                                    ui.add_space(4.0);
-                                    ui.label("Passport Subtitle:");
-                                    let title_res = ui.text_edit_singleline(&mut self.title_line);
-                                    if title_res.changed() {
-                                        selection_changed = true;
-                                    }
-                                    if title_res.lost_focus() {
-                                        self.db.preferences.title_line = self.title_line.clone();
-                                        let _ = save_database(&self.db);
-                                    }
-
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Hunter of Yharnam").clicked() {
-                                            self.title_line = "Hunter of Yharnam   •   Trophy Hunter".to_string();
-                                            self.db.preferences.title_line = self.title_line.clone();
-                                            let _ = save_database(&self.db);
-                                            selection_changed = true;
-                                        }
-                                        if ui.button("Clear").clicked() {
-                                            self.title_line.clear();
-                                            self.db.preferences.title_line = self.title_line.clone();
-                                            let _ = save_database(&self.db);
-                                            selection_changed = true;
-                                        }
-                                    });
-                                });
-
-                                ui.add_space(8.0);
-
-                                // EXPORT & SAVE
-                                theme::card_frame().show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.label(
-                                        egui::RichText::new("💾 Export Passport")
-                                            .strong()
-                                            .color(theme::COLOR_ACCENT_CYAN),
-                                    );
-                                    ui.add_space(4.0);
-
-                                    ui.label("Export Destination:");
-                                    ui.horizontal(|ui| {
-                                        let mut path_str = self.output_path.to_string_lossy().to_string();
-                                        if ui.text_edit_singleline(&mut path_str).changed() {
-                                            self.output_path = PathBuf::from(&path_str);
-                                            self.db.preferences.export_path = Some(path_str);
-                                            let _ = save_database(&self.db);
-                                        }
-                                        if ui.button("Browse…").clicked() {
-                                            if let Some(path) = rfd::FileDialog::new()
-                                                .set_file_name("TrophyVault.png")
-                                                .save_file()
-                                            {
-                                                self.output_path = path.clone();
-                                                self.db.preferences.export_path =
-                                                    Some(path.to_string_lossy().to_string());
-                                                let _ = save_database(&self.db);
-                                            }
-                                        }
-                                    });
-
-                                    ui.add_space(6.0);
-                                    ui.horizontal(|ui| {
-                                        if ui
-                                            .add_sized([140.0, 32.0], egui::Button::new("📸 Export PNG"))
-                                            .clicked()
-                                        {
-                                            self.save_png(ctx);
-                                        }
-                                        if ui
-                                            .add_sized([140.0, 32.0], egui::Button::new("🎨 Export SVG"))
-                                            .clicked()
-                                        {
-                                            self.save_svg();
-                                        }
-                                    });
-
-                                    ui.add_space(6.0);
-                                    let current_sync_mode = self
-                                        .db
-                                        .preferences
-                                        .sync_settings
-                                        .as_ref()
-                                        .map(|s| s.sync_mode)
-                                        .unwrap_or_default();
-                                    if ui
-                                        .add_sized([ui.available_width(), 30.0], egui::Button::new("☁ Sync to Web Now"))
-                                        .clicked()
-                                    {
-                                        self.trigger_cloud_sync_with_mode(current_sync_mode);
-                                    }
-                                });
-
-                                ui.add_space(6.0);
-                                ui.hyperlink_to(
-                                    egui::RichText::new("GitHub Repository ↗")
-                                        .color(egui::Color32::from_rgb(88, 166, 255)),
-                                    "https://github.com/MohandL3G/TrophyVault",
-                                );
-                            });
-                    },
-                );
-
-                ui.separator();
-
-                // Right Column: Canvas Live Preview
-                ui.vertical_centered(|ui| {
-                    ui.add_space(4.0);
-                    if let Some(texture) = &self.preview_texture {
-                        let available_size = ui.available_size();
-                        let aspect_ratio = 1200.0 / 850.0;
-                        let mut target_width = available_size.x.max(400.0);
-                        let mut target_height = target_width / aspect_ratio;
-
-                        if target_height > available_size.y {
-                            target_height = available_size.y.max(300.0);
-                            target_width = target_height * aspect_ratio;
-                        }
-
-                        ui.image((texture.id(), egui::vec2(target_width, target_height)));
-                    } else {
-                        ui.centered_and_justified(|ui| {
-                            ui.label("Rendering passport preview...");
-                        });
-                    }
-                });
-            });
-        });
-
-        if selection_changed {
-            self.generate_and_render_preview(ctx);
-        }
-    }
-
-    // --- TAB: Library & Stats ---
+    // --- MAIN SHOWCASE TAB: Library & Statistics ---
     fn show_database_tab(&mut self, ctx: &egui::Context) {
+        let mut sort_changed = false;
+
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_notification_bar(ui);
 
-            ui.add_space(4.0);
+            // Title & Action Bar
+            ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.heading(
                     egui::RichText::new("📚 Library & Statistics")
@@ -1191,7 +821,7 @@ impl PassportApp {
                         self.run_sync(ctx);
                     }
                     let db_path = get_database_path_for_user(self.current_steam_id.as_deref());
-                    if ui.button("📂 Open Folder").clicked() {
+                    if ui.button("📂 Open DB Folder").clicked() {
                         if let Some(parent) = db_path.parent() {
                             let _ = open::that(parent);
                         }
@@ -1199,60 +829,234 @@ impl PassportApp {
                 });
             });
 
-            ui.add_space(4.0);
+            ui.add_space(8.0);
 
-            // Summary Metric Cards
-            if let Some(data) = &self.data {
-                let total_playtime_minutes: u64 = self.db.games.values().map(|g| g.playtime_minutes as u64).sum();
-                let hours = total_playtime_minutes / 60;
-                let mins = total_playtime_minutes % 60;
+            // Top Hero Telemetry row: 5 glowing stat cards
+            let (total_games, perfect_games, total_playtime_minutes, completion_rate, ovr_score) =
+                if let Some(data) = &self.data {
+                    (
+                        data.stats.total_configs,
+                        data.stats.perfect_games,
+                        data.stats.total_playtime_minutes,
+                        data.stats.completion_rate,
+                        data.stats.ovr_score,
+                    )
+                } else {
+                    let tg = self.db.games.len() as u32;
+                    let pg = self
+                        .db
+                        .games
+                        .values()
+                        .filter(|g| g.total > 0 && g.unlocked >= g.total)
+                        .count() as u32;
+                    let pm: u64 = self.db.games.values().map(|g| g.playtime_minutes as u64).sum();
+                    let total_unlocked: u32 = self.db.games.values().map(|g| g.unlocked).sum();
+                    let total_ach: u32 = self.db.games.values().map(|g| g.total).sum();
+                    let cr = if total_ach > 0 {
+                        (total_unlocked as f64 / total_ach as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    (tg, pg, pm, cr, 0)
+                };
 
-                ui.horizontal(|ui| {
-                    let card_w = (ui.available_width() - 36.0) / 4.0;
+            ui.horizontal(|ui| {
+                let card_w = ((ui.available_width() - 32.0) / 5.0 - 20.0).max(110.0);
 
-                    theme::card_frame().show(ui, |ui| {
-                        ui.set_width(card_w);
-                        ui.label(egui::RichText::new("TOTAL GAMES").size(10.0).color(theme::COLOR_TEXT_MUTED));
-                        ui.heading(egui::RichText::new(format!("{}", data.stats.total_configs)).color(theme::COLOR_ACCENT_CYAN));
-                    });
-                    theme::card_frame().show(ui, |ui| {
-                        ui.set_width(card_w);
-                        ui.label(egui::RichText::new("ACHIEVEMENTS").size(10.0).color(theme::COLOR_TEXT_MUTED));
-                        ui.heading(egui::RichText::new(format!("{}", data.stats.unlocked_achievements)).color(theme::COLOR_SUCCESS_GREEN));
-                    });
-                    theme::card_frame().show(ui, |ui| {
-                        ui.set_width(card_w);
-                        ui.label(egui::RichText::new("OVR SCORE").size(10.0).color(theme::COLOR_TEXT_MUTED));
-                        ui.heading(egui::RichText::new(format!("{}", data.stats.ovr_score)).color(theme::COLOR_ACCENT_GOLD));
-                    });
-                    theme::card_frame().show(ui, |ui| {
-                        ui.set_width(card_w);
-                        ui.label(egui::RichText::new("TOTAL PLAYTIME").size(10.0).color(theme::COLOR_TEXT_MUTED));
-                        ui.heading(egui::RichText::new(format!("{}h {}m", hours, mins)).color(theme::COLOR_TEXT_PRIMARY));
+                // 1. Total Games
+                theme::hero_stat_frame(None).show(ui, |ui| {
+                    ui.set_width(card_w);
+                    ui.label(egui::RichText::new("TOTAL GAMES").size(10.0).color(theme::COLOR_TEXT_MUTED));
+                    ui.heading(
+                        egui::RichText::new(format!("{}", total_games))
+                            .color(theme::COLOR_ACCENT_CYAN)
+                            .strong(),
+                    );
+                });
+
+                // 2. 100% Perfect Games (Gold accent)
+                theme::hero_stat_frame(Some(theme::COLOR_ACCENT_GOLD)).show(ui, |ui| {
+                    ui.set_width(card_w);
+                    ui.label(egui::RichText::new("★ 100% PERFECT").size(10.0).color(theme::COLOR_ACCENT_GOLD));
+                    ui.heading(
+                        egui::RichText::new(format!("{}", perfect_games))
+                            .color(theme::COLOR_ACCENT_GOLD)
+                            .strong(),
+                    );
+                });
+
+                // 3. Total Playtime
+                theme::hero_stat_frame(None).show(ui, |ui| {
+                    ui.set_width(card_w);
+                    ui.label(egui::RichText::new("TOTAL PLAYTIME").size(10.0).color(theme::COLOR_TEXT_MUTED));
+                    let hours = total_playtime_minutes / 60;
+                    let mins = total_playtime_minutes % 60;
+                    ui.heading(
+                        egui::RichText::new(format!("{}h {}m", hours, mins))
+                            .color(theme::COLOR_WHITE)
+                            .strong(),
+                    );
+                });
+
+                // 4. Completion Rate
+                theme::hero_stat_frame(None).show(ui, |ui| {
+                    ui.set_width(card_w);
+                    ui.label(egui::RichText::new("COMPLETION RATE").size(10.0).color(theme::COLOR_TEXT_MUTED));
+                    ui.heading(
+                        egui::RichText::new(format!("{:.1}%", completion_rate))
+                            .color(theme::COLOR_SUCCESS_GREEN)
+                            .strong(),
+                    );
+                });
+
+                // 5. Overall Score (OVR score pill)
+                theme::hero_stat_frame(Some(theme::COLOR_ACCENT_CYAN)).show(ui, |ui| {
+                    ui.set_width(card_w);
+                    ui.label(egui::RichText::new("OVERALL SCORE").size(10.0).color(theme::COLOR_TEXT_MUTED));
+                    ui.horizontal(|ui| {
+                        let pill_frame = egui::Frame::none()
+                            .fill(theme::COLOR_CYAN_PILL_BG)
+                            .stroke(egui::Stroke::new(1.0_f32, theme::COLOR_ACCENT_CYAN))
+                            .rounding(egui::Rounding::same(6.0_f32))
+                            .inner_margin(egui::Margin::symmetric(8.0_f32, 2.0_f32));
+                        pill_frame.show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{} OVR", ovr_score))
+                                    .size(16.0)
+                                    .color(theme::COLOR_ACCENT_CYAN)
+                                    .strong(),
+                            );
+                        });
                     });
                 });
-                ui.add_space(8.0);
-            }
-
-            // Search Filter
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("🔍 Filter Games:").color(theme::COLOR_TEXT_SECONDARY));
-                ui.text_edit_singleline(&mut self.db_search_query);
             });
 
-            ui.add_space(6.0);
+            ui.add_space(10.0);
+
+            // Filter & Search Toolbar
+            ui.horizontal(|ui| {
+                // Search Input
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.db_search_query)
+                        .hint_text("Search by title or AppID...")
+                        .desired_width(240.0),
+                );
+
+                ui.add_space(8.0);
+
+                // Platform Filter Pills
+                let filter_pills = [
+                    (PlatformFilter::All, "All"),
+                    (PlatformFilter::Steam, "Steam"),
+                    (PlatformFilter::Ports, "Ports"),
+                    (PlatformFilter::Perfect100Only, "★ 100% Only"),
+                ];
+
+                for (p_filter, p_label) in filter_pills {
+                    let is_active = self.platform_filter == p_filter;
+                    let (bg, border, text_color) = if is_active {
+                        if p_filter == PlatformFilter::Perfect100Only {
+                            (theme::COLOR_GOLD_PILL_BG, theme::COLOR_ACCENT_GOLD, theme::COLOR_ACCENT_GOLD)
+                        } else {
+                            (theme::COLOR_CYAN_PILL_BG, theme::COLOR_ACCENT_CYAN, theme::COLOR_WHITE)
+                        }
+                    } else {
+                        (theme::COLOR_CARD_BG, theme::COLOR_BORDER_SLATE, theme::COLOR_TEXT_SECONDARY)
+                    };
+
+                    let pill_btn = egui::Button::new(
+                        egui::RichText::new(p_label).size(12.0).color(text_color).strong(),
+                    )
+                    .fill(bg)
+                    .stroke(egui::Stroke::new(1.0_f32, border))
+                    .rounding(egui::Rounding::same(6.0_f32));
+
+                    if ui.add(pill_btn).clicked() {
+                        self.platform_filter = p_filter;
+                    }
+                }
+
+                ui.add_space(8.0);
+
+                // Sort Dropdown
+                let sort_label = match (self.db_sort_col, self.db_sort_dir) {
+                    (DbSortColumn::Playtime, _) => "⏱ Sort: Playtime",
+                    (DbSortColumn::Progress, _) => "🏆 Sort: Progress",
+                    (DbSortColumn::Title, _) => "🔤 Sort: Alphabetical",
+                    _ => "Sort Games",
+                };
+
+                egui::ComboBox::from_id_salt("library_sort_selector")
+                    .selected_text(sort_label)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(self.db_sort_col == DbSortColumn::Playtime, "⏱ Playtime")
+                            .clicked()
+                        {
+                            self.db_sort_col = DbSortColumn::Playtime;
+                            self.db_sort_dir = SortDirection::Descending;
+                            sort_changed = true;
+                        }
+                        if ui
+                            .selectable_label(self.db_sort_col == DbSortColumn::Progress, "🏆 Progress")
+                            .clicked()
+                        {
+                            self.db_sort_col = DbSortColumn::Progress;
+                            self.db_sort_dir = SortDirection::Descending;
+                            sort_changed = true;
+                        }
+                        if ui
+                            .selectable_label(self.db_sort_col == DbSortColumn::Title, "🔤 Alphabetical")
+                            .clicked()
+                        {
+                            self.db_sort_col = DbSortColumn::Title;
+                            self.db_sort_dir = SortDirection::Ascending;
+                            sort_changed = true;
+                        }
+                    });
+
+                // Right aligned "☁ Sync to Web Now" button
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let current_sync_mode = self
+                        .db
+                        .preferences
+                        .sync_settings
+                        .as_ref()
+                        .map(|s| s.sync_mode)
+                        .unwrap_or_default();
+
+                    let sync_btn = egui::Button::new(
+                        egui::RichText::new("☁ Sync to Web Now")
+                            .color(theme::COLOR_ACCENT_CYAN)
+                            .strong(),
+                    )
+                    .fill(theme::COLOR_CYAN_PILL_BG)
+                    .stroke(egui::Stroke::new(1.0_f32, theme::COLOR_ACCENT_CYAN))
+                    .rounding(egui::Rounding::same(6.0_f32));
+
+                    if ui.add(sync_btn).clicked() {
+                        self.trigger_cloud_sync_with_mode(current_sync_mode);
+                    }
+                });
+            });
+
+            if sort_changed {
+                self.rebuild_cached_db_keys();
+            }
+
+            ui.add_space(8.0);
 
             // Table Columns layout
-            let avail_w = ui.available_width().max(880.0);
-            let col_platform = 120.0;
-            let col_appid = 90.0;
-            let col_ach = 105.0;
-            let col_pct = 80.0;
-            let col_playtime = 95.0;
-            let col_source = 85.0;
-            let col_action = 80.0;
-            let fixed_sum = col_platform + col_appid + col_ach + col_pct + col_playtime + col_source + col_action;
-            let col_title = (avail_w - fixed_sum - 35.0).max(240.0);
+            let avail_w = ui.available_width().max(980.0);
+            let col_platform = 95.0;
+            let col_appid = 85.0;
+            let col_progress_bar = 125.0;
+            let col_trophy = 85.0;
+            let col_playtime = 85.0;
+            let col_status = 110.0;
+            let col_action = 55.0;
+            let fixed_sum = col_platform + col_appid + col_progress_bar + col_trophy + col_playtime + col_status + col_action;
+            let col_title = (avail_w - fixed_sum - 40.0).max(220.0);
 
             let mut switch_sort = None;
             let sort_arrow = |col: DbSortColumn| -> &'static str {
@@ -1268,94 +1072,109 @@ impl PassportApp {
 
             // Table Header Row
             ui.horizontal(|ui| {
-                if ui.add_sized(
-                    [col_title, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("Game Title{}", sort_arrow(DbSortColumn::Title)))
-                            .strong()
-                            .color(theme::COLOR_ACCENT_CYAN),
+                if ui
+                    .add_sized(
+                        [col_title, 22.0],
+                        egui::Button::new(
+                            egui::RichText::new(format!("Game Title{}", sort_arrow(DbSortColumn::Title)))
+                                .strong()
+                                .color(theme::COLOR_ACCENT_CYAN),
+                        )
+                        .frame(false),
                     )
-                    .frame(false),
-                ).clicked() {
+                    .clicked()
+                {
                     switch_sort = Some(DbSortColumn::Title);
                 }
 
-                if ui.add_sized(
-                    [col_platform, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("Platform{}", sort_arrow(DbSortColumn::Platform)))
-                            .strong()
-                            .color(theme::COLOR_ACCENT_CYAN),
+                if ui
+                    .add_sized(
+                        [col_platform, 22.0],
+                        egui::Button::new(
+                            egui::RichText::new(format!("Platform{}", sort_arrow(DbSortColumn::Platform)))
+                                .strong()
+                                .color(theme::COLOR_ACCENT_CYAN),
+                        )
+                        .frame(false),
                     )
-                    .frame(false),
-                ).clicked() {
+                    .clicked()
+                {
                     switch_sort = Some(DbSortColumn::Platform);
                 }
 
-                if ui.add_sized(
-                    [col_appid, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("App ID{}", sort_arrow(DbSortColumn::AppId)))
-                            .strong()
-                            .color(theme::COLOR_ACCENT_CYAN),
+                if ui
+                    .add_sized(
+                        [col_appid, 22.0],
+                        egui::Button::new(
+                            egui::RichText::new(format!("App ID{}", sort_arrow(DbSortColumn::AppId)))
+                                .strong()
+                                .color(theme::COLOR_ACCENT_CYAN),
+                        )
+                        .frame(false),
                     )
-                    .frame(false),
-                ).clicked() {
+                    .clicked()
+                {
                     switch_sort = Some(DbSortColumn::AppId);
                 }
 
-                if ui.add_sized(
-                    [col_ach, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("Achievements{}", sort_arrow(DbSortColumn::Achievements)))
-                            .strong()
-                            .color(theme::COLOR_ACCENT_CYAN),
+                if ui
+                    .add_sized(
+                        [col_progress_bar, 22.0],
+                        egui::Button::new(
+                            egui::RichText::new(format!("Progress{}", sort_arrow(DbSortColumn::Progress)))
+                                .strong()
+                                .color(theme::COLOR_ACCENT_CYAN),
+                        )
+                        .frame(false),
                     )
-                    .frame(false),
-                ).clicked() {
-                    switch_sort = Some(DbSortColumn::Achievements);
-                }
-
-                if ui.add_sized(
-                    [col_pct, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("Progress{}", sort_arrow(DbSortColumn::Progress)))
-                            .strong()
-                            .color(theme::COLOR_ACCENT_CYAN),
-                    )
-                    .frame(false),
-                ).clicked() {
+                    .clicked()
+                {
                     switch_sort = Some(DbSortColumn::Progress);
                 }
 
-                if ui.add_sized(
-                    [col_playtime, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("Playtime{}", sort_arrow(DbSortColumn::Playtime)))
-                            .strong()
-                            .color(theme::COLOR_ACCENT_CYAN),
+                if ui
+                    .add_sized(
+                        [col_trophy, 22.0],
+                        egui::Button::new(
+                            egui::RichText::new(format!("Trophies{}", sort_arrow(DbSortColumn::Achievements)))
+                                .strong()
+                                .color(theme::COLOR_ACCENT_CYAN),
+                        )
+                        .frame(false),
                     )
-                    .frame(false),
-                ).clicked() {
+                    .clicked()
+                {
+                    switch_sort = Some(DbSortColumn::Achievements);
+                }
+
+                if ui
+                    .add_sized(
+                        [col_playtime, 22.0],
+                        egui::Button::new(
+                            egui::RichText::new(format!("Playtime{}", sort_arrow(DbSortColumn::Playtime)))
+                                .strong()
+                                .color(theme::COLOR_ACCENT_CYAN),
+                        )
+                        .frame(false),
+                    )
+                    .clicked()
+                {
                     switch_sort = Some(DbSortColumn::Playtime);
                 }
 
-                if ui.add_sized(
-                    [col_source, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("Source{}", sort_arrow(DbSortColumn::Source)))
+                ui.add_sized(
+                    [col_status, 22.0],
+                    egui::Label::new(
+                        egui::RichText::new("Status")
                             .strong()
                             .color(theme::COLOR_ACCENT_CYAN),
-                    )
-                    .frame(false),
-                ).clicked() {
-                    switch_sort = Some(DbSortColumn::Source);
-                }
+                    ),
+                );
 
                 ui.add_sized(
                     [col_action, 22.0],
                     egui::Label::new(
-                        egui::RichText::new("Actions")
+                        egui::RichText::new("Act")
                             .strong()
                             .color(theme::COLOR_ACCENT_CYAN),
                     ),
@@ -1371,33 +1190,63 @@ impl PassportApp {
                 } else {
                     self.db_sort_col = col;
                     self.db_sort_dir = match col {
-                        DbSortColumn::Title | DbSortColumn::Platform | DbSortColumn::Source => SortDirection::Ascending,
+                        DbSortColumn::Title | DbSortColumn::Platform | DbSortColumn::Source => {
+                            SortDirection::Ascending
+                        }
                         _ => SortDirection::Descending,
                     };
                 }
                 self.rebuild_cached_db_keys();
             }
+
             ui.separator();
 
-            let query = self.db_search_query.to_lowercase();
+            let query = self.db_search_query.trim().to_lowercase();
+            let filter = self.platform_filter;
+
             let filtered_keys: Vec<String> = self
                 .cached_db_keys
                 .iter()
                 .filter(|key| {
+                    let game = match self.db.games.get(*key) {
+                        Some(g) => g,
+                        None => return false,
+                    };
+
+                    // Platform filter
+                    let passes_platform = match filter {
+                        PlatformFilter::All => true,
+                        PlatformFilter::Steam => {
+                            let p = game.platform.to_lowercase();
+                            p.contains("steam") && !p.contains("port") && !p.contains("recomp")
+                        }
+                        PlatformFilter::Ports => {
+                            let p = game.platform.to_lowercase();
+                            p.contains("port") || p.contains("recomp") || game.source == "manual"
+                        }
+                        PlatformFilter::Perfect100Only => {
+                            game.total > 0 && game.unlocked >= game.total
+                        }
+                    };
+
+                    if !passes_platform {
+                        return false;
+                    }
+
+                    // Query filter
                     if query.is_empty() {
                         true
-                    } else if let Some(game) = self.db.games.get(*key) {
-                        game.name.to_lowercase().contains(&query)
-                            || game.platform.to_lowercase().contains(&query)
                     } else {
-                        false
+                        game.name.to_lowercase().contains(&query)
+                            || game.appid.as_deref().map(|id| id.contains(&query)).unwrap_or(false)
+                            || game.platform.to_lowercase().contains(&query)
                     }
                 })
                 .cloned()
                 .collect();
 
             let mut to_delete_key: Option<String> = None;
-            let row_height = 24.0;
+            let row_height = 28.0;
             let total_rows = filtered_keys.len();
 
             egui::ScrollArea::vertical()
@@ -1406,43 +1255,195 @@ impl PassportApp {
                     for idx in row_range {
                         let key = &filtered_keys[idx];
                         if let Some(game) = self.db.games.get(key) {
+                            let is_perfect = game.total > 0 && game.unlocked >= game.total;
+
                             ui.horizontal(|ui| {
+                                // 1. Title (Gold text and star if 100% perfect game)
+                                let title_text = if is_perfect {
+                                    egui::RichText::new(format!("★ {}", &game.name))
+                                        .color(theme::COLOR_ACCENT_GOLD)
+                                        .strong()
+                                } else {
+                                    egui::RichText::new(&game.name)
+                                        .color(theme::COLOR_TEXT_PRIMARY)
+                                        .strong()
+                                };
                                 ui.add_sized(
                                     [col_title, row_height],
-                                    egui::Label::new(&game.name).truncate(),
-                                );
-                                ui.add_sized(
-                                    [col_platform, row_height],
-                                    egui::Label::new(&game.platform).truncate(),
-                                );
-                                ui.add_sized(
-                                    [col_appid, row_height],
-                                    egui::Label::new(game.appid.as_deref().unwrap_or("—")).truncate(),
-                                );
-                                ui.add_sized(
-                                    [col_ach, row_height],
-                                    egui::Label::new(format!("{}/{}", game.unlocked, game.total)),
-                                );
-                                ui.add_sized(
-                                    [col_pct, row_height],
-                                    egui::Label::new(format!("{}%", game.pct)),
-                                );
-                                // STRICT CONSTRAINT: Read-only playtime display, no manual edits!
-                                ui.add_sized(
-                                    [col_playtime, row_height],
-                                    egui::Label::new(format!(
-                                        "{}h {}m",
-                                        game.playtime_minutes / 60,
-                                        game.playtime_minutes % 60
-                                    )),
-                                );
-                                ui.add_sized(
-                                    [col_source, row_height],
-                                    egui::Label::new(&game.source),
+                                    egui::Label::new(title_text).truncate(),
                                 );
 
+                                // 2. Platform badge
+                                let (p_bg, p_border, p_color, p_label) = if game.platform.to_lowercase().contains("steam") {
+                                    (theme::COLOR_CYAN_PILL_BG, theme::COLOR_ACCENT_CYAN, theme::COLOR_ACCENT_CYAN, "Steam")
+                                } else if game.platform.to_lowercase().contains("port")
+                                    || game.platform.to_lowercase().contains("bbport")
+                                    || game.source == "manual"
+                                {
+                                    (
+                                        egui::Color32::from_rgba_premultiplied(168, 85, 247, 30),
+                                        egui::Color32::from_rgb(168, 85, 247),
+                                        egui::Color32::from_rgb(192, 132, 252),
+                                        "PC Port",
+                                    )
+                                } else {
+                                    (
+                                        theme::COLOR_CARD_BG,
+                                        theme::COLOR_BORDER_SLATE,
+                                        theme::COLOR_TEXT_SECONDARY,
+                                        game.platform.as_str(),
+                                    )
+                                };
+
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(col_platform, row_height),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        let frame = egui::Frame::none()
+                                            .fill(p_bg)
+                                            .stroke(egui::Stroke::new(1.0_f32, p_border))
+                                            .rounding(egui::Rounding::same(4.0_f32))
+                                            .inner_margin(egui::Margin::symmetric(6.0_f32, 2.0_f32));
+                                        frame.show(ui, |ui| {
+                                            ui.label(
+                                                egui::RichText::new(p_label)
+                                                    .size(10.5)
+                                                    .color(p_color)
+                                                    .strong(),
+                                            );
+                                        });
+                                    },
+                                );
+
+                                // 3. AppID
+                                ui.add_sized(
+                                    [col_appid, row_height],
+                                    egui::Label::new(
+                                        egui::RichText::new(game.appid.as_deref().unwrap_or("—"))
+                                            .color(theme::COLOR_TEXT_MUTED)
+                                            .monospace(),
+                                    )
+                                    .truncate(),
+                                );
+
+                                // 4. Progress bar (16px high sleek progress bar)
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(col_progress_bar, row_height),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        let bar_size = egui::vec2(col_progress_bar - 10.0, 16.0);
+                                        let (bar_rect, _) = ui.allocate_exact_size(bar_size, egui::Sense::hover());
+                                        let pct_clamped = (game.pct as f32 / 100.0).clamp(0.0, 1.0);
+                                        let fill_w = bar_rect.width() * pct_clamped;
+                                        let fill_rect = egui::Rect::from_min_size(
+                                            bar_rect.min,
+                                            egui::vec2(fill_w, bar_rect.height()),
+                                        );
+                                        let bar_color = if is_perfect {
+                                            theme::COLOR_ACCENT_GOLD
+                                        } else {
+                                            theme::COLOR_ACCENT_CYAN
+                                        };
+
+                                        ui.painter().rect(
+                                            bar_rect,
+                                            egui::Rounding::same(4.0_f32),
+                                            theme::COLOR_BG_OBSIDIAN,
+                                            egui::Stroke::new(1.0_f32, theme::COLOR_BORDER_SLATE),
+                                        );
+                                        if fill_w > 0.0 {
+                                            ui.painter().rect(
+                                                fill_rect,
+                                                egui::Rounding::same(4.0_f32),
+                                                bar_color,
+                                                egui::Stroke::NONE,
+                                            );
+                                        }
+                                        let text_pos = bar_rect.center();
+                                        ui.painter().text(
+                                            text_pos,
+                                            egui::Align2::CENTER_CENTER,
+                                            format!("{}%", game.pct),
+                                            egui::FontId::monospace(10.0),
+                                            theme::COLOR_WHITE,
+                                        );
+                                    },
+                                );
+
+                                // 5. Trophy count
+                                let trophy_text = if is_perfect {
+                                    egui::RichText::new(format!("{}/{} 🏆", game.unlocked, game.total))
+                                        .color(theme::COLOR_ACCENT_GOLD)
+                                        .strong()
+                                } else {
+                                    egui::RichText::new(format!("{}/{}", game.unlocked, game.total))
+                                        .color(theme::COLOR_TEXT_PRIMARY)
+                                };
+                                ui.add_sized([col_trophy, row_height], egui::Label::new(trophy_text));
+
+                                // 6. Playtime (STRICT CONSTRAINT: Authenticity enforced, read-only display)
+                                let playtime_text = format!(
+                                    "{}h {}m",
+                                    game.playtime_minutes / 60,
+                                    game.playtime_minutes % 60
+                                );
+                                ui.add_sized(
+                                    [col_playtime, row_height],
+                                    egui::Label::new(
+                                        egui::RichText::new(playtime_text)
+                                            .color(theme::COLOR_TEXT_PRIMARY)
+                                            .monospace(),
+                                    ),
+                                );
+
+                                // 7. Status badge
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(col_status, row_height),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        let (s_bg, s_border, s_color, s_label) = if is_perfect {
+                                            (
+                                                theme::COLOR_GOLD_PILL_BG,
+                                                theme::COLOR_ACCENT_GOLD,
+                                                theme::COLOR_ACCENT_GOLD,
+                                                "★ PERFECT",
+                                            )
+                                        } else if game.unlocked > 0 {
+                                            (
+                                                theme::COLOR_CYAN_PILL_BG,
+                                                theme::COLOR_ACCENT_CYAN,
+                                                theme::COLOR_ACCENT_CYAN,
+                                                "IN PROGRESS",
+                                            )
+                                        } else {
+                                            (
+                                                theme::COLOR_BG_OBSIDIAN,
+                                                theme::COLOR_BORDER_SLATE,
+                                                theme::COLOR_TEXT_MUTED,
+                                                "UNPLAYED",
+                                            )
+                                        };
+
+                                        let frame = egui::Frame::none()
+                                            .fill(s_bg)
+                                            .stroke(egui::Stroke::new(1.0_f32, s_border))
+                                            .rounding(egui::Rounding::same(4.0_f32))
+                                            .inner_margin(egui::Margin::symmetric(6.0_f32, 2.0_f32));
+                                        frame.show(ui, |ui| {
+                                            ui.label(
+                                                egui::RichText::new(s_label)
+                                                    .size(9.5)
+                                                    .color(s_color)
+                                                    .strong(),
+                                            );
+                                        });
+                                    },
+                                );
+
+                                // 8. Action (Delete)
                                 if ui
-                                    .add_sized([col_action, 20.0], egui::Button::new("🗑 Delete"))
+                                    .add_sized([col_action, 22.0], egui::Button::new("🗑"))
+                                    .on_hover_text("Delete game entry from local database")
                                     .clicked()
                                 {
                                     to_delete_key = Some(key.clone());
@@ -1456,7 +1457,7 @@ impl PassportApp {
                 self.db.games.remove(&key);
                 let _ = save_database(&self.db);
                 self.rebuild_cached_db_keys();
-                self.refresh_data_and_preview(ctx);
+                self.refresh_data();
             }
         });
     }
@@ -1544,6 +1545,7 @@ impl PassportApp {
                     }
 
                     ui.add_space(8.0);
+                    // STRICT CONSTRAINT: Playtime cannot be edited manually here!
                     if ui.button("💾 Save & Add Custom Game").clicked() {
                         let id = self
                             .new_game_name
@@ -1853,7 +1855,11 @@ impl PassportApp {
                     });
                     ui.horizontal(|ui| {
                         ui.label("Last Sync Timestamp (Unix):");
-                        ui.label(egui::RichText::new(format!("{}", ts)).monospace().color(theme::COLOR_TEXT_SECONDARY));
+                        ui.label(
+                            egui::RichText::new(format!("{}", ts))
+                                .monospace()
+                                .color(theme::COLOR_TEXT_SECONDARY),
+                        );
                     });
                 } else {
                     ui.label(
@@ -1865,7 +1871,11 @@ impl PassportApp {
 
                 if let Some((msg, is_err)) = &cloud_status {
                     ui.add_space(6.0);
-                    let color = if *is_err { theme::COLOR_ERROR_RED } else { theme::COLOR_SUCCESS_GREEN };
+                    let color = if *is_err {
+                        theme::COLOR_ERROR_RED
+                    } else {
+                        theme::COLOR_SUCCESS_GREEN
+                    };
                     ui.label(egui::RichText::new(msg).color(color).strong());
                 }
             });
@@ -1973,7 +1983,7 @@ impl PassportApp {
             theme::card_frame().show(ui, |ui| {
                 ui.set_width(ui.available_width().min(680.0));
                 ui.label(
-                    egui::RichText::new("🏷 Player Identity & Passport Subtitle")
+                    egui::RichText::new("🏷 Player Identity & Subtitle")
                         .strong()
                         .color(theme::COLOR_ACCENT_CYAN),
                 );
@@ -1986,7 +1996,7 @@ impl PassportApp {
                 }
 
                 ui.add_space(4.0);
-                ui.label("Passport Subtitle:");
+                ui.label("Profile Subtitle:");
                 if ui.text_edit_singleline(&mut self.title_line).changed() {
                     self.db.preferences.title_line = self.title_line.clone();
                     pref_changed = true;

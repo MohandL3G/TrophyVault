@@ -734,7 +734,7 @@ class TrophyVaultApp {
       const row = document.createElement('tr');
       const isCompleted = game.platinum === true || game.pct === 100 || (game.unlocked === game.total && game.total > 0);
       if (isCompleted) {
-        card.classList.add('is-perfect');
+        row.classList.add('is-perfect');
       }
 
       const bannerUrl = game.appid && /^\d+$/.test(game.appid)

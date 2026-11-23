@@ -1924,6 +1924,24 @@ body.hud-body {
   text-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
 }
 
+/* 100% Perfect Table Row Highlight */
+.hud-table tr.is-perfect td {
+  border-bottom-color: rgba(255, 215, 0, 0.25);
+}
+
+.hud-table tr.is-perfect td:first-child {
+  border-left: 3px solid var(--gold);
+}
+
+.hud-table tr.is-perfect .table-game-name {
+  color: var(--gold);
+  text-shadow: 0 0 8px rgba(255, 215, 0, 0.3);
+}
+
+.hud-table tr.is-perfect:hover td {
+  background: rgba(255, 215, 0, 0.06);
+}
+
 /* --------------------------------------------------------------------------
    Avatar Upload & Customization Modal
    -------------------------------------------------------------------------- */

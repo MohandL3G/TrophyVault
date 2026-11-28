@@ -5,14 +5,23 @@ services:
     restart: unless-stopped
     ports:
       - "5050:5050"
+    env_file:
+      - .env
     environment:
       - PORT=5050
-      - API_KEY=trophyvault-secret-key-change-me
-      - ADMIN_PASSWORD=trophyvault-admin-password-change-me
-      - USERNAME=MohandL3G
-      - SLOGAN=HUNTER
+      - API_KEY=${API_KEY:-trophyvault-secret-key-change-me}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-trophyvault-admin-password-change-me}
+      - USERNAME=${USERNAME:-MohandL3G}
+      - SLOGAN=${SLOGAN:-HUNTER}
       - DATABASE_PATH=/data/trophyvault.db
       - AVATAR_PATH=/data/avatar.png
+      # Setting 1: Steam Web API Ingestion
+      - STEAM_API_KEY=${STEAM_API_KEY:-}
+      - STEAM_ID=${STEAM_ID:-76561198423209668}
+      - STEAM_SYNC_COOLDOWN_SECS=${STEAM_SYNC_COOLDOWN_SECS:-300}
+      # Setting 2: CloudRedirect API Placeholder (future integration)
+      - CLOUDREDIRECT_API_URL=${CLOUDREDIRECT_API_URL:-}
+      - CLOUDREDIRECT_API_KEY=${CLOUDREDIRECT_API_KEY:-}
     volumes:
       - trophyvault-data:/data
 

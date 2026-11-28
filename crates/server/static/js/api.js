@@ -95,6 +95,62 @@ export class TrophyVaultApi {
     }
     return await res.json();
   }
+
+  /**
+   * Fetch sanitized server settings and Steam sync status
+   */
+  async getSettings() {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/settings`, {
+        cache: 'no-store',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      console.warn('[TrophyVaultApi] getSettings failed:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Update server settings (requires Admin Password)
+   */
+  async updateSettings(payload, password) {
+    const res = await fetch(`${this.baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Password': password
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || `Settings update failed (HTTP ${res.status})`);
+    }
+    return await res.json();
+  }
+
+  /**
+   * Trigger non-blocking Steam Web API sync
+   */
+  async syncSteam({ force = false, password = '' } = {}) {
+    const headers = { 'Accept': 'application/json' };
+    if (force && password) {
+      headers['X-Admin-Password'] = password;
+    }
+    const query = force ? '?force=true' : '';
+    const res = await fetch(`${this.baseUrl}/api/sync/steam${query}`, {
+      method: 'POST',
+      headers
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.message || `Steam sync failed (HTTP ${res.status})`);
+    }
+    return data;
+  }
 }
 
 /**

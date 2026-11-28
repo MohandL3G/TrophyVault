@@ -106,6 +106,11 @@ pub fn init_db_schema(conn: &Connection) -> SqliteResult<()> {
             enabled INTEGER NOT NULL DEFAULT 1
         );
 
+        CREATE TABLE IF NOT EXISTS metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_trophies_game_id ON trophies(game_id);
         ",
     )?;
@@ -160,6 +165,69 @@ pub fn purge_sqlite_database(conn: &mut Connection) -> Result<(), rusqlite::Erro
     tx.execute("DELETE FROM trophies;", [])?;
     tx.execute("DELETE FROM games;", [])?;
     tx.execute("DELETE FROM manual_games;", [])?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Reads a single key from the `metadata` table.
+pub fn get_metadata(conn: &Connection, key: &str) -> SqliteResult<Option<String>> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT value FROM metadata WHERE key = ?1;",
+        params![key],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// Inserts or updates a key-value pair in the `metadata` table.
+pub fn set_metadata(conn: &Connection, key: &str, value: &str) -> SqliteResult<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2);",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+/// Deletes a key from the `metadata` table.
+pub fn delete_metadata(conn: &Connection, key: &str) -> SqliteResult<()> {
+    conn.execute("DELETE FROM metadata WHERE key = ?1;", params![key])?;
+    Ok(())
+}
+
+/// Reads all key-value pairs from the `metadata` table.
+pub fn get_all_metadata(conn: &Connection) -> SqliteResult<HashMap<String, String>> {
+    let mut stmt = conn.prepare("SELECT key, value FROM metadata;")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut map = HashMap::new();
+    for r in rows {
+        let (k, v) = r?;
+        map.insert(k, v);
+    }
+    Ok(map)
+}
+
+/// Atomically applies a batch of metadata upserts (`Some(val)`) and deletions (`None`).
+pub fn apply_metadata_batch(
+    conn: &mut Connection,
+    entries: &[(&str, Option<&str>)],
+) -> SqliteResult<()> {
+    let tx = conn.transaction()?;
+    for (key, val_opt) in entries {
+        match val_opt {
+            Some(val) => {
+                tx.execute(
+                    "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2);",
+                    params![key, val],
+                )?;
+            }
+            None => {
+                tx.execute("DELETE FROM metadata WHERE key = ?1;", params![key])?;
+            }
+        }
+    }
     tx.commit()?;
     Ok(())
 }
@@ -941,5 +1009,40 @@ mod tests {
         let trophies = get_trophies_for_game(&conn, "bb").expect("get_trophies_for_game must succeed");
         assert_eq!(trophies.len(), 1);
         assert_eq!(trophies[0].id, "42");
+    }
+
+    #[test]
+    fn test_metadata_table_crud_and_purge_retention() {
+        let mut conn = open_in_memory_db().unwrap();
+        set_metadata(&conn, "steam_id", "76561198423209668").unwrap();
+        set_metadata(&conn, "cloudredirect_api_url", "https://cr.example.com").unwrap();
+
+        assert_eq!(
+            get_metadata(&conn, "steam_id").unwrap().as_deref(),
+            Some("76561198423209668")
+        );
+
+        apply_metadata_batch(
+            &mut conn,
+            &[
+                ("steam_sync_cooldown_secs", Some("300")),
+                ("cloudredirect_api_url", None),
+            ],
+        )
+        .unwrap();
+
+        let all = get_all_metadata(&conn).unwrap();
+        assert_eq!(all.get("steam_id").map(String::as_str), Some("76561198423209668"));
+        assert_eq!(all.get("steam_sync_cooldown_secs").map(String::as_str), Some("300"));
+        assert!(!all.contains_key("cloudredirect_api_url"));
+
+        purge_sqlite_database(&mut conn).unwrap();
+        assert_eq!(
+            get_metadata(&conn, "steam_id").unwrap().as_deref(),
+            Some("76561198423209668")
+        );
+
+        delete_metadata(&conn, "steam_id").unwrap();
+        assert_eq!(get_metadata(&conn, "steam_id").unwrap(), None);
     }
 }

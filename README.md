@@ -1,24 +1,47 @@
-# 🏆 TrophyVault
+# TrophyVault
 
-A luxury gaming achievements passport generator and persistent records desktop application built in **Rust** (using `egui` and `wgpu`).
+A self-hosted **Rust** web showcase server, Steam Web API ingestion engine, and dynamic SVG Achievements Passport generator built with **Axum**, **Tokio**, and **SQLite**.
 
-Inspired by the Palworld Passport HUD, it aggregates your Steam library, LuaTools games, and PC Ports/Decomps (like **Bloodborne**) into a shareable passport card featuring an overall rating badge (**OVR**), progress telemetry, playtime metrics, and library milestones.
+Inspired by the Palworld Passport HUD, TrophyVault aggregates your Steam library (playtime, achievements, and unlock timestamps) alongside preserved PC Ports/Decomps (such as **Bloodborne**) into a live cyberpunk showcase and embeddable SVG passport cards with an overall rating badge (**OVR**).
 
 ---
 
 ## Key Features
 
-- **Direct Steam & LuaTools Ingestion**: Reads Steam `localconfig.vdf` for playtime (handling signed/unsigned 32-bit AppIDs), binary `shortcuts.vdf` for Non-Steam games, and discovers games added via [LuaTools](https://github.com/madoiscool/LuaTools).
-- **Custom Ports & Decomps Support**: Native support for **Bloodborne PC port** (`bbport`/`ShadPS4`) reading unlocked trophies from `user\RcloneUI\trophies.txt` and `metadata.json`.
-- **Persistent JSON Database**: Keeps all your game records in `%APPDATA%\AchievementsPassport\library_database.json`. Even if you uninstall a game or remove its `.lua` manifest, your achievements and playtime are permanently preserved.
-- **Two Passport Modes**:
-  - **Overall Library**: An all-in-one passport summarizing total completions, 100% platinums, active games, and overall rating.
-  - **Single Game**: Generate a dedicated card for any specific game with completion percentage, clear status, and platform origin.
-- **5 Sci-Fi HUD Themes**: Cyberpunk Cyan, Trophy Gold, Bloodborne Crimson, Emerald Matrix, and Neon Violet.
-- **Instant GPU Preview & Export**: Export crisp 1200 × 850 PNG cards or scalable vector SVG files with no watermarks or placeholder mottos.
+- **Direct Steam Web API Ingestion**: Pulls owned games, cumulative playtime, player summary, achievement schemas, and unlocked achievement timestamps directly from the Steam Web API (`IPlayerService`, `ISteamUser`, `ISteamUserStats`).
+- **Auto-Sync with Cooldown Protection**: Opening or refreshing the web dashboard triggers a non-blocking background sync respecting `STEAM_SYNC_COOLDOWN_SECS` (default `300s`), returning cached SQLite data instantly and refreshing the UI via Server-Sent Events (SSE) when new data arrives.
+- **Monotonic Playtime & Historical Retention**: Preserves the high-watermark `MAX(stored, incoming)` playtime and retains historical entries (including Bloodborne PC port and custom entries) in SQLite (`trophyvault.db`).
+- **Two Settings Architecture**:
+  - **Steam Web API**: `STEAM_API_KEY`, `STEAM_ID`, and `STEAM_SYNC_COOLDOWN_SECS`.
+  - **CloudRedirect API (Placeholder)**: `CLOUDREDIRECT_API_URL` and `CLOUDREDIRECT_API_KEY` ready for future CloudRedirect daemon integration.
+  - Configurable via `.env`/environment variables or the admin-protected Settings modal in the Web UI.
+- **Dynamic GitHub SVG Embeds**:
+  - `GET /api/passport.svg` — Overall or single-game 1200 × 850 SVG Passport (5 cyber-tactical themes).
+  - `GET /api/badge.svg` — Compact 400 × 100 GitHub Profile HUD Badge.
+  - Cache-bypassing headers for live GitHub Camo rendering.
 
 ---
 
-## Automated Builds
+## Quick Start (Docker Compose)
 
-Pre-built Windows binaries (`achievements-passport-windows.zip`) are automatically built on every commit via GitHub Actions. Download the latest build from the **Actions** tab or the **Releases** page.
+1. Copy `.env.example` to `.env` and set `ADMIN_PASSWORD`, `API_KEY`, `STEAM_API_KEY`, and `STEAM_ID`:
+   ```bash
+   cp .env.example .env
+   ```
+2. Launch the server:
+   ```bash
+   docker compose up -d
+   ```
+3. Open `http://localhost:5050` in your browser.
+
+---
+
+## Development
+
+```bash
+# Run all workspace unit & integration tests
+cargo test --workspace
+
+# Run server locally
+ADMIN_PASSWORD=dev-admin STEAM_ID=76561198423209668 cargo run -p trophyvault-server
+```

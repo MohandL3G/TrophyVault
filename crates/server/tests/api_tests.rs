@@ -97,6 +97,7 @@ fn setup_test_app() -> (axum::Router, tempfile::TempDir, String) {
         db_path,
         avatar_path: temp_dir.path().join("avatar.png"),
         static_dir: static_dir.clone(),
+        ..ServerConfig::default()
     };
 
     let test_db = create_test_db();
@@ -165,6 +166,7 @@ async fn test_stats_endpoint_with_env_overrides() {
         db_path: temp_dir.path().join("db.db"),
         avatar_path: temp_dir.path().join("avatar.png"),
         static_dir: static_dir.clone(),
+        ..ServerConfig::default()
     };
 
     let test_db = create_test_db();
@@ -440,6 +442,7 @@ async fn test_static_index_serving() {
         db_path: temp_dir.path().join("db.db"),
         avatar_path: temp_dir.path().join("avatar.png"),
         static_dir: static_dir.clone(),
+        ..ServerConfig::default()
     };
     let state = Arc::new(RwLock::new(AppState::new(&config)));
     let app = create_app(state, static_dir);
@@ -783,6 +786,7 @@ async fn test_server_migrates_existing_json_to_sqlite_on_startup() {
         db_path: db_path.clone(),
         avatar_path: temp_dir.path().join("avatar.png"),
         static_dir: static_dir.clone(),
+        ..ServerConfig::default()
     };
 
     let state = Arc::new(RwLock::new(AppState::new(&config)));
@@ -952,5 +956,416 @@ async fn test_single_game_detail_endpoint() {
     assert_eq!(game["id"], "bloodborne");
     assert_eq!(game["name"], "Bloodborne");
     assert_eq!(game["trophies"][0]["name"], "Bloodborne");
+}
+
+#[tokio::test]
+async fn test_settings_get_never_exposes_secrets_and_defaults() {
+    let (app, _temp, _key) = setup_test_app();
+
+    let req = Request::builder()
+        .uri("/api/settings")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(json["steam"]["api_key_configured"], false);
+    assert_eq!(json["steam"]["steam_id"], "76561198423209668");
+    assert_eq!(json["steam"]["cooldown_secs"], 300);
+    assert_eq!(json["steam"]["sync_in_progress"], false);
+    assert_eq!(json["cloudredirect"]["configured"], false);
+    assert_eq!(json["cloudredirect"]["api_key_configured"], false);
+    assert_eq!(json["cloudredirect"]["status"], "placeholder");
+    assert!(json["steam"].get("api_key").is_none());
+    assert!(json["cloudredirect"].get("api_key").is_none());
+}
+
+#[tokio::test]
+async fn test_settings_update_requires_admin_and_persists_to_sqlite() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("settings_test.db");
+    let static_dir = temp_dir.path().join("static");
+    std::fs::create_dir_all(&static_dir).unwrap();
+
+    let config = ServerConfig {
+        port: 5050,
+        api_key: "sync-only-token".to_string(),
+        admin_password: "super-admin-pass".to_string(),
+        db_path: db_path.clone(),
+        avatar_path: temp_dir.path().join("avatar.png"),
+        static_dir: static_dir.clone(),
+        ..ServerConfig::default()
+    };
+
+    let state = Arc::new(RwLock::new(AppState::new(&config)));
+    let app = create_app(state, static_dir.clone());
+
+    let update_body = serde_json::json!({
+        "steam_api_key": "secret-steam-key-12345",
+        "steam_id": "76561198000012345",
+        "steam_sync_cooldown_secs": 120,
+        "cloudredirect_api_url": "https://cr.mohandl3g.ly",
+        "cloudredirect_api_key": "cr-secret-999"
+    });
+
+    // 1. Unauthenticated -> 401
+    let res1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .method("PUT")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(update_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res1.status(), StatusCode::UNAUTHORIZED);
+
+    // 2. API_KEY alone -> 401 (admin password strictly required)
+    let res2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .method("PUT")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, "Bearer sync-only-token")
+                .body(Body::from(update_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res2.status(), StatusCode::UNAUTHORIZED);
+
+    // 3. Valid X-Admin-Password -> 200 OK
+    let res3 = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .method("PUT")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("X-Admin-Password", "super-admin-pass")
+                .body(Body::from(update_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res3.status(), StatusCode::OK);
+
+    let bytes = res3.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(!body_str.contains("secret-steam-key-12345"));
+    assert!(!body_str.contains("cr-secret-999"));
+
+    let json: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    assert_eq!(json["steam"]["api_key_configured"], true);
+    assert_eq!(json["steam"]["steam_id"], "76561198000012345");
+    assert_eq!(json["steam"]["cooldown_secs"], 120);
+    assert_eq!(json["cloudredirect"]["configured"], true);
+    assert_eq!(json["cloudredirect"]["api_url"], "https://cr.mohandl3g.ly");
+    assert_eq!(json["cloudredirect"]["api_key_configured"], true);
+
+    // 4. Reload AppState from disk and verify SQLite metadata persistence survives restart
+    let reloaded_state = AppState::new(&config);
+    assert_eq!(
+        reloaded_state.settings.steam_api_key.as_deref(),
+        Some("secret-steam-key-12345")
+    );
+    assert_eq!(reloaded_state.settings.steam_id, "76561198000012345");
+    assert_eq!(reloaded_state.settings.steam_sync_cooldown_secs, 120);
+    assert_eq!(
+        reloaded_state.settings.cloudredirect_api_url.as_deref(),
+        Some("https://cr.mohandl3g.ly")
+    );
+    assert_eq!(
+        reloaded_state.settings.cloudredirect_api_key.as_deref(),
+        Some("cr-secret-999")
+    );
+}
+
+#[tokio::test]
+async fn test_steam_sync_mock_server_ingestion_monotonic_and_cooldown() {
+    use axum::extract::Query as AxumQuery;
+    use axum::routing::get;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let owned_calls = Arc::new(AtomicUsize::new(0));
+    let owned_calls_clone = Arc::clone(&owned_calls);
+
+    let mock_router = axum::Router::new()
+        .route(
+            "/ISteamUser/GetPlayerSummaries/v0002/",
+            get(|| async {
+                axum::Json(serde_json::json!({
+                    "response": {
+                        "players": [{
+                            "steamid": "76561198423209668",
+                            "personaname": "MohandL3G",
+                            "profileurl": "https://steamcommunity.com/id/MohandL3G/",
+                            "avatarfull": "https://avatars.steamstatic.com/test_full.jpg"
+                        }]
+                    }
+                }))
+            }),
+        )
+        .route(
+            "/IPlayerService/GetOwnedGames/v0001/",
+            get(move || {
+                let counter = Arc::clone(&owned_calls_clone);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(serde_json::json!({
+                        "response": {
+                            "game_count": 3,
+                            "games": [
+                                {
+                                    "appid": 1086940,
+                                    "name": "Baldur's Gate 3",
+                                    "playtime_forever": 14500,
+                                    "rtime_last_played": 1732700000,
+                                    "has_community_visible_stats": true
+                                },
+                                {
+                                    "appid": 1623730,
+                                    "name": "Palworld",
+                                    "playtime_forever": 100,
+                                    "rtime_last_played": 1732600000,
+                                    "has_community_visible_stats": true
+                                },
+                                {
+                                    "appid": 999999,
+                                    "name": "Private Stats Game",
+                                    "playtime_forever": 50,
+                                    "rtime_last_played": 1732500000,
+                                    "has_community_visible_stats": true
+                                }
+                            ]
+                        }
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/ISteamUserStats/GetSchemaForGame/v0002/",
+            get(|AxumQuery(params): AxumQuery<HashMap<String, String>>| async move {
+                let appid = params.get("appid").map(String::as_str).unwrap_or("");
+                if appid == "1086940" {
+                    (
+                        StatusCode::OK,
+                        axum::Json(serde_json::json!({
+                            "game": {
+                                "gameName": "Baldur's Gate 3",
+                                "availableGameStats": {
+                                    "achievements": [
+                                        {
+                                            "name": "BG3_HERO",
+                                            "displayName": "Hero of the Gate",
+                                            "description": "Save Baldur's Gate",
+                                            "hidden": 0
+                                        },
+                                        {
+                                            "name": "BG3_SECRET",
+                                            "displayName": "Dark Urge",
+                                            "hidden": 1
+                                        }
+                                    ]
+                                }
+                            }
+                        })),
+                    )
+                } else {
+                    (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({})))
+                }
+            }),
+        )
+        .route(
+            "/ISteamUserStats/GetPlayerAchievements/v0001/",
+            get(|AxumQuery(params): AxumQuery<HashMap<String, String>>| async move {
+                let appid = params.get("appid").map(String::as_str).unwrap_or("");
+                if appid == "1086940" {
+                    (
+                        StatusCode::OK,
+                        axum::Json(serde_json::json!({
+                            "playerstats": {
+                                "steamID": "76561198423209668",
+                                "gameName": "Baldur's Gate 3",
+                                "success": true,
+                                "achievements": [
+                                    { "apiname": "BG3_HERO", "achieved": 1, "unlocktime": 1732000100 },
+                                    { "apiname": "BG3_SECRET", "achieved": 0, "unlocktime": 0 }
+                                ]
+                            }
+                        })),
+                    )
+                } else {
+                    (
+                        StatusCode::FORBIDDEN,
+                        axum::Json(serde_json::json!({
+                            "playerstats": {
+                                "success": false,
+                                "error": "Profile is not public"
+                            }
+                        })),
+                    )
+                }
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, mock_router).await;
+    });
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("steam_sync_test.db");
+    let static_dir = temp_dir.path().join("static");
+    std::fs::create_dir_all(&static_dir).unwrap();
+
+    let config = ServerConfig {
+        port: 5050,
+        api_key: "sync-token".to_string(),
+        admin_password: "admin-pass-123".to_string(),
+        db_path: db_path.clone(),
+        avatar_path: temp_dir.path().join("avatar.png"),
+        static_dir: static_dir.clone(),
+        steam_api_key: Some("mock-steam-key".to_string()),
+        steam_id: "76561198423209668".to_string(),
+        steam_sync_cooldown_secs: 300,
+        steam_api_base_url: format!("http://{}", mock_addr),
+        ..ServerConfig::default()
+    };
+
+    // Seed DB with Bloodborne (5400m) + Palworld (2400m)
+    let state = Arc::new(RwLock::new(AppState::with_database(&config, create_test_db())));
+    let app = create_app(state.clone(), static_dir);
+
+    // 1. Trigger Steam sync inline via ?wait=true
+    let sync_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/sync/steam?wait=true")
+                .method("POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sync_res.status(), StatusCode::OK);
+    let sync_bytes = sync_res.into_body().collect().await.unwrap().to_bytes();
+    let sync_json: serde_json::Value = serde_json::from_slice(&sync_bytes).unwrap();
+    assert_eq!(sync_json["status"], "completed");
+    assert_eq!(sync_json["games_fetched"], 3);
+    assert_eq!(sync_json["games_with_trophies"], 1);
+    assert_eq!(sync_json["achievements_skipped_or_private"], 2);
+    assert_eq!(sync_json["total_games_in_db"], 4); // bloodborne + palworld + BG3 + private game
+    assert_eq!(owned_calls.load(Ordering::SeqCst), 1);
+
+    // 2. Verify SQLite games, trophies, and metadata tables
+    let games_res = app
+        .clone()
+        .oneshot(Request::builder().uri("/api/games").method("GET").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let games_bytes = games_res.into_body().collect().await.unwrap().to_bytes();
+    let games: Vec<serde_json::Value> = serde_json::from_slice(&games_bytes).unwrap();
+    assert_eq!(games.len(), 4);
+
+    // Bloodborne preserved
+    let bb = games.iter().find(|g| g["id"] == "bloodborne").unwrap();
+    assert_eq!(bb["playtime_minutes"], 5400);
+    assert_eq!(bb["source"], "manual");
+
+    // Palworld playtime protected at MAX(2400, 100) = 2400
+    let pw = games.iter().find(|g| g["appid"] == "1623730").unwrap();
+    assert_eq!(pw["playtime_minutes"], 2400);
+
+    // BG3 trophies ingested
+    let bg3_trophies_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/games/1086940/trophies")
+                .method("GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bg3_trophies_bytes = bg3_trophies_res.into_body().collect().await.unwrap().to_bytes();
+    let bg3_trophies: Vec<serde_json::Value> = serde_json::from_slice(&bg3_trophies_bytes).unwrap();
+    assert_eq!(bg3_trophies.len(), 2);
+    assert_eq!(bg3_trophies[0]["id"], "BG3_HERO");
+    assert_eq!(bg3_trophies[0]["unlocked"], true);
+    assert_eq!(bg3_trophies[0]["unlocked_time"], 1732000100);
+    assert_eq!(bg3_trophies[1]["id"], "BG3_SECRET");
+    assert_eq!(bg3_trophies[1]["unlocked"], false);
+
+    // Metadata table persisted
+    {
+        let conn = trophyvault_core::db::open_or_create_db(&db_path).unwrap();
+        let meta = trophyvault_core::db::get_all_metadata(&conn).unwrap();
+        assert_eq!(meta.get("last_steam_sync_status").map(String::as_str), Some("ok"));
+        assert!(meta.contains_key("last_steam_sync_at"));
+        assert_eq!(meta.get("steam_persona_name").map(String::as_str), Some("MohandL3G"));
+    }
+
+    // 3. F5 / Repeat POST /api/sync/steam hits cooldown and does NOT call Valve API again!
+    let cooldown_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/sync/steam")
+                .method("POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cooldown_res.status(), StatusCode::OK);
+    let cd_bytes = cooldown_res.into_body().collect().await.unwrap().to_bytes();
+    let cd_json: serde_json::Value = serde_json::from_slice(&cd_bytes).unwrap();
+    assert_eq!(cd_json["status"], "cooldown");
+    assert!(cd_json["cooldown_remaining_secs"].as_u64().unwrap() > 0);
+    assert_eq!(owned_calls.load(Ordering::SeqCst), 1);
+
+    // 4. force=true without admin auth -> 401
+    let force_unauth = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/sync/steam?force=true")
+                .method("POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(force_unauth.status(), StatusCode::UNAUTHORIZED);
+
+    // 5. force=true with admin auth + non-blocking mode -> 202 Accepted
+    let force_auth = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/sync/steam?force=true")
+                .method("POST")
+                .header("X-Admin-Password", "admin-pass-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(force_auth.status(), StatusCode::ACCEPTED);
+    let force_bytes = force_auth.into_body().collect().await.unwrap().to_bytes();
+    let force_json: serde_json::Value = serde_json::from_slice(&force_bytes).unwrap();
+    assert_eq!(force_json["status"], "started");
 }
 

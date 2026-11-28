@@ -20,13 +20,65 @@ use trophyvault_core::generator::{
 };
 use trophyvault_core::storage::{database_to_achievements_data, LibraryDatabase};
 
+use std::sync::atomic::Ordering;
 use crate::badge::generate_badge_svg;
 use crate::state::{current_timestamp, SharedState};
+use crate::steam::{run_steam_sync, SteamSyncOutcome};
 
 /// Query parameters for /api/sync endpoint.
 #[derive(Debug, Default, Deserialize)]
 pub struct SyncQuery {
     pub mode: Option<String>,
+}
+
+/// Query parameters for /api/sync/steam endpoint.
+#[derive(Debug, Default, Deserialize)]
+pub struct SteamSyncQuery {
+    pub force: Option<bool>,
+    pub wait: Option<bool>,
+}
+
+/// Publicly safe Steam settings & sync status payload.
+#[derive(Debug, Serialize)]
+pub struct SteamSettingsStatus {
+    pub api_key_configured: bool,
+    pub steam_id: String,
+    pub cooldown_secs: u64,
+    pub persona_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub last_sync_at: Option<u64>,
+    pub last_sync_status: Option<String>,
+    pub last_sync_message: Option<String>,
+    pub sync_in_progress: bool,
+    pub cooldown_remaining_secs: u64,
+}
+
+/// Publicly safe CloudRedirect placeholder settings payload.
+#[derive(Debug, Serialize)]
+pub struct CloudRedirectSettingsStatus {
+    pub configured: bool,
+    pub api_url: String,
+    pub api_key_configured: bool,
+    pub status: &'static str,
+}
+
+/// Combined Two Settings response for GET/PUT /api/settings.
+#[derive(Debug, Serialize)]
+pub struct SettingsStatusResponse {
+    pub steam: SteamSettingsStatus,
+    pub cloudredirect: CloudRedirectSettingsStatus,
+}
+
+/// Admin update payload for PUT/POST /api/settings.
+#[derive(Debug, Default, Deserialize)]
+pub struct UpdateSettingsRequest {
+    pub steam_api_key: Option<String>,
+    pub clear_steam_api_key: Option<bool>,
+    pub steam_id: Option<String>,
+    pub steam_sync_cooldown_secs: Option<u64>,
+    pub cloudredirect_api_url: Option<String>,
+    pub cloudredirect_api_key: Option<String>,
+    pub clear_cloudredirect_api_key: Option<bool>,
 }
 
 /// Query parameters for /api/passport.svg.
@@ -821,4 +873,234 @@ pub async fn delete_avatar_handler(
             "message": "Avatar removed successfully"
         })),
     ).into_response())
+}
+
+async fn build_settings_status(state: &SharedState) -> SettingsStatusResponse {
+    let guard = state.read().await;
+    let now = current_timestamp();
+    let api_key_configured = guard
+        .settings
+        .steam_api_key
+        .as_deref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    let cr_url = guard
+        .settings
+        .cloudredirect_api_url
+        .clone()
+        .unwrap_or_default();
+    let cr_key_configured = guard
+        .settings
+        .cloudredirect_api_key
+        .as_deref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+
+    SettingsStatusResponse {
+        steam: SteamSettingsStatus {
+            api_key_configured,
+            steam_id: guard.settings.steam_id.clone(),
+            cooldown_secs: guard.settings.steam_sync_cooldown_secs,
+            persona_name: guard.steam_persona_name.clone(),
+            avatar_url: guard.steam_avatar_url.clone(),
+            last_sync_at: guard.last_steam_sync_at,
+            last_sync_status: guard.last_steam_sync_status.clone(),
+            last_sync_message: guard.last_steam_sync_message.clone(),
+            sync_in_progress: guard.sync_in_progress.load(Ordering::SeqCst),
+            cooldown_remaining_secs: guard.cooldown_remaining_secs(now),
+        },
+        cloudredirect: CloudRedirectSettingsStatus {
+            configured: !cr_url.trim().is_empty() && cr_key_configured,
+            api_url: cr_url,
+            api_key_configured: cr_key_configured,
+            status: "placeholder",
+        },
+    }
+}
+
+/// GET /api/settings
+///
+/// Returns sanitized Two Settings status (Steam Web API & CloudRedirect API placeholder).
+/// Never exposes secret API keys.
+pub async fn get_settings_handler(State(state): State<SharedState>) -> Json<SettingsStatusResponse> {
+    Json(build_settings_status(&state).await)
+}
+
+/// PUT/POST /api/settings
+///
+/// Updates Setting 1 (Steam API) and Setting 2 (CloudRedirect API placeholder)
+/// and persists them to SQLite `metadata` table. Requires Admin Password.
+pub async fn update_settings_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateSettingsRequest>,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    {
+        let guard = state.read().await;
+        if !guard.is_admin_password_authorized(&headers) {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "status": "error",
+                    "message": "Unauthorized: Invalid or missing admin password"
+                })),
+            ));
+        }
+    }
+
+    if let Some(ref sid) = payload.steam_id {
+        let trimmed = sid.trim();
+        if trimmed.is_empty() || !trimmed.chars().all(|c| c.is_ascii_digit()) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "status": "error",
+                    "message": "Invalid Steam ID: must be a numeric SteamID64"
+                })),
+            ));
+        }
+    }
+
+    {
+        let mut guard = state.write().await;
+
+        if payload.clear_steam_api_key == Some(true) {
+            guard.settings.steam_api_key = None;
+        } else if let Some(ref key) = payload.steam_api_key {
+            let trimmed = key.trim();
+            if !trimmed.is_empty() {
+                guard.settings.steam_api_key = Some(trimmed.to_string());
+            }
+        }
+
+        if let Some(ref sid) = payload.steam_id {
+            guard.settings.steam_id = sid.trim().to_string();
+        }
+
+        if let Some(cooldown) = payload.steam_sync_cooldown_secs {
+            guard.settings.steam_sync_cooldown_secs = cooldown;
+        }
+
+        if let Some(ref url) = payload.cloudredirect_api_url {
+            let trimmed = url.trim();
+            guard.settings.cloudredirect_api_url = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+
+        if payload.clear_cloudredirect_api_key == Some(true) {
+            guard.settings.cloudredirect_api_key = None;
+        } else if let Some(ref key) = payload.cloudredirect_api_key {
+            let trimmed = key.trim();
+            if !trimmed.is_empty() {
+                guard.settings.cloudredirect_api_key = Some(trimmed.to_string());
+            }
+        }
+
+        if let Err(e) = guard.persist_settings_to_db() {
+            tracing::error!("Failed to persist settings to SQLite metadata: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "status": "error",
+                    "message": format!("Failed to persist settings: {}", e)
+                })),
+            ));
+        }
+    }
+
+    let status = build_settings_status(&state).await;
+    Ok((StatusCode::OK, Json(status)).into_response())
+}
+
+/// POST /api/sync/steam
+///
+/// Triggers Steam Web API ingestion respecting `STEAM_SYNC_COOLDOWN_SECS`.
+/// Non-blocking by default (`202 Accepted`), spawning a background task that
+/// persists updates to SQLite and notifies connected browsers via SSE `/api/events`.
+/// Passing `?force=true` requires admin authorization to bypass cooldown.
+/// Passing `?wait=true` awaits completion inline.
+pub async fn sync_steam_handler(
+    State(state): State<SharedState>,
+    Query(query): Query<SteamSyncQuery>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let force = query.force.unwrap_or(false);
+    let wait = query.wait.unwrap_or(false);
+
+    if force {
+        let guard = state.read().await;
+        if !guard.is_admin_authorized(&headers) {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "status": "error",
+                    "message": "Unauthorized: force=true requires admin authorization"
+                })),
+            ));
+        }
+    }
+
+    // Fast pre-flight check before spawning background sync
+    {
+        let guard = state.read().await;
+        let has_key = guard
+            .settings
+            .steam_api_key
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if !has_key {
+            return Ok((
+                StatusCode::OK,
+                Json(SteamSyncOutcome::NotConfigured {
+                    message: "STEAM_API_KEY is not configured".to_string(),
+                }),
+            )
+                .into_response());
+        }
+
+        if guard.sync_in_progress.load(Ordering::SeqCst) {
+            return Ok((StatusCode::OK, Json(SteamSyncOutcome::InProgress)).into_response());
+        }
+
+        if !force {
+            let now = current_timestamp();
+            let remaining = guard.cooldown_remaining_secs(now);
+            if remaining > 0 {
+                return Ok((
+                    StatusCode::OK,
+                    Json(SteamSyncOutcome::Cooldown {
+                        cooldown_remaining_secs: remaining,
+                        cooldown_secs: guard.settings.steam_sync_cooldown_secs,
+                        last_sync_at: guard.last_steam_sync_at,
+                    }),
+                )
+                    .into_response());
+            }
+        }
+    }
+
+    if wait {
+        let outcome = run_steam_sync(state, force).await;
+        let status_code = match &outcome {
+            SteamSyncOutcome::Failed { .. } => StatusCode::BAD_GATEWAY,
+            _ => StatusCode::OK,
+        };
+        return Ok((status_code, Json(outcome)).into_response());
+    }
+
+    let cooldown_secs = state.read().await.settings.steam_sync_cooldown_secs;
+    let state_bg = state.clone();
+    tokio::spawn(async move {
+        let _ = run_steam_sync(state_bg, force).await;
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(SteamSyncOutcome::Started { cooldown_secs }),
+    )
+        .into_response())
 }

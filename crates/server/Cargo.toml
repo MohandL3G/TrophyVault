@@ -3,7 +3,7 @@ name = "trophyvault-server"
 version = "0.1.1"
 edition = "2021"
 authors = ["MohandL3G"]
-description = "TrophyVault: Self-hosted web server and sync backend"
+description = "TrophyVault: Self-hosted web server and Steam Web API ingestion backend"
 license = "MIT"
 
 [dependencies]
@@ -17,6 +17,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

@@ -2,6 +2,7 @@ pub mod badge;
 pub mod db;
 pub mod handlers;
 pub mod state;
+pub mod steam;
 
 use axum::{
     handler::HandlerWithoutStateExt,
@@ -62,6 +63,13 @@ pub fn create_app(state: SharedState, static_dir: PathBuf) -> Router {
     let api_router = Router::new()
         .route("/api/health", get(handlers::health_handler))
         .route("/api/sync", post(handlers::sync_handler))
+        .route("/api/sync/steam", post(handlers::sync_steam_handler))
+        .route(
+            "/api/settings",
+            get(handlers::get_settings_handler)
+                .put(handlers::update_settings_handler)
+                .post(handlers::update_settings_handler),
+        )
         .route("/api/purge", post(handlers::purge_handler))
         .route("/api/events", get(handlers::events_handler))
         .route("/api/passport.svg", get(handlers::passport_handler))

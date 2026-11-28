@@ -12,9 +12,6 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/core ./crates/core
 COPY crates/server ./crates/server
 
-# Exclude desktop crate from workspace members so server builds cleanly without GUI dependencies
-RUN sed -i '/crates\/desktop/d' Cargo.toml && sed -i '/default-members/d' Cargo.toml
-
 # Compile release binary for trophyvault-server
 RUN cargo build --release -p trophyvault-server
 
@@ -23,7 +20,7 @@ RUN cargo build --release -p trophyvault-server
 # ------------------------------------------------------------------------------
 FROM debian:bookworm-slim AS runner
 
-# Install CA certificates for outgoing HTTPS requests
+# Install CA certificates for outgoing HTTPS requests (Steam Web API)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -44,6 +41,9 @@ EXPOSE 5050
 
 # Default environment variables
 ENV PORT=5050 \
-    DATABASE_PATH=/data/trophyvault.db
+    DATABASE_PATH=/data/trophyvault.db \
+    AVATAR_PATH=/data/avatar.png \
+    STEAM_ID=76561198423209668 \
+    STEAM_SYNC_COOLDOWN_SECS=300
 
 ENTRYPOINT ["/usr/local/bin/trophyvault-server"]

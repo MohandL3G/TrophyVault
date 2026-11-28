@@ -1,4 +1,4 @@
-name: Build TrophyVault Desktop
+name: CI TrophyVault Server
 
 on:
   push:
@@ -11,61 +11,29 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-windows:
-    name: Build Windows Release
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run Unit Tests
-        run: cargo test --verbose --workspace
-
-      - name: Build Release Binary
-        run: cargo build --release -p trophyvault --verbose
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: TrophyVault-Windows
-          path: target/release/TrophyVault.exe
-          if-no-files-found: error
-
-  build-linux:
-    name: Build Linux Release
+  test-and-build:
+    name: Test & Build Server
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxinerama-dev
-
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run Unit Tests
+      - name: Run Workspace Unit & Integration Tests
         run: cargo test --verbose --workspace
 
-      - name: Build Release Binary
-        run: cargo build --release -p trophyvault --verbose
+      - name: Build Server Release Binary
+        run: cargo build --release -p trophyvault-server --verbose
 
-      - name: Upload Build Artifact
+      - name: Upload Server Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TrophyVault-Linux
-          path: target/release/TrophyVault
+          name: trophyvault-server-linux
+          path: target/release/trophyvault-server
           if-no-files-found: error

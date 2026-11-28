@@ -62,6 +62,9 @@ class TrophyVaultApp {
     // Real-time sync & auto-refresh
     this.eventSource = null;
     this.autoRefreshInterval = null;
+    this.syncPollTimer = null;
+    this.steamSyncActive = false;
+    this.settingsCache = null;
 
     // Cache DOM Elements
     this.dom = {
@@ -71,7 +74,10 @@ class TrophyVaultApp {
       personaInitial: document.getElementById('personaInitial'),
       personaLabel: document.getElementById('personaLabel'),
       personaName: document.getElementById('personaName'),
+      syncSteamBtn: document.getElementById('syncSteamBtn'),
+      syncSteamBtnText: document.getElementById('syncSteamBtnText'),
       refreshBtn: document.getElementById('refreshBtn'),
+      openSettingsModalBtn: document.getElementById('openSettingsModalBtn'),
       openShareModalBtn: document.getElementById('openShareModalBtn'),
 
       // Hero Stats
@@ -96,8 +102,24 @@ class TrophyVaultApp {
       gamesTableContainer: document.getElementById('gamesTableContainer'),
       gamesTableBody: document.getElementById('gamesTableBody'),
       emptyState: document.getElementById('emptyState'),
-      copyCliBtn: document.getElementById('copyCliBtn'),
+      emptySyncSteamBtn: document.getElementById('emptySyncSteamBtn'),
       emptyRetryBtn: document.getElementById('emptyRetryBtn'),
+
+      // Settings Modal
+      settingsModal: document.getElementById('settingsModal'),
+      settingsModalCloseBtn: document.getElementById('settingsModalCloseBtn'),
+      settingsCancelBtn: document.getElementById('settingsCancelBtn'),
+      settingsSaveBtn: document.getElementById('settingsSaveBtn'),
+      settingsForceSyncBtn: document.getElementById('settingsForceSyncBtn'),
+      steamKeyStatusPill: document.getElementById('steamKeyStatusPill'),
+      crStatusPill: document.getElementById('crStatusPill'),
+      settingsSteamId: document.getElementById('settingsSteamId'),
+      settingsCooldownSecs: document.getElementById('settingsCooldownSecs'),
+      settingsSteamApiKey: document.getElementById('settingsSteamApiKey'),
+      steamSyncMetaText: document.getElementById('steamSyncMetaText'),
+      settingsCrUrl: document.getElementById('settingsCrUrl'),
+      settingsCrKey: document.getElementById('settingsCrKey'),
+      settingsAdminPassword: document.getElementById('settingsAdminPassword'),
 
       // Avatar Modal
       avatarModal: document.getElementById('avatarModal'),
@@ -163,6 +185,8 @@ class TrophyVaultApp {
     this.initAutoRefresh();
     await this.loadData();
     this.updateShareEmbedConfig();
+    this.refreshSettingsStatus();
+    this.triggerSteamAutoSync({ auto: true });
   }
 
   /**
@@ -235,20 +259,33 @@ class TrophyVaultApp {
    * Bind DOM event handlers
    */
   bindEvents() {
+    // Sync Steam button
+    this.dom.syncSteamBtn?.addEventListener('click', () => {
+      const cachedPass = sessionStorage.getItem('trophyvault_admin_pass') || '';
+      this.triggerSteamAutoSync({ auto: false, force: Boolean(cachedPass), password: cachedPass });
+    });
+
     // Refresh button
     this.dom.refreshBtn?.addEventListener('click', () => {
       this.loadData();
     });
 
-    // Empty state retry button
+    // Empty state actions
+    this.dom.emptySyncSteamBtn?.addEventListener('click', () => {
+      const cachedPass = sessionStorage.getItem('trophyvault_admin_pass') || '';
+      this.triggerSteamAutoSync({ auto: false, force: Boolean(cachedPass), password: cachedPass });
+    });
+
     this.dom.emptyRetryBtn?.addEventListener('click', () => {
       this.loadData();
     });
 
-    // Copy CLI command button in empty state
-    this.dom.copyCliBtn?.addEventListener('click', () => {
-      this.copyTextToClipboard('TrophyVault --sync', 'Sync command copied to clipboard!');
-    });
+    // Settings Modal triggers
+    this.dom.openSettingsModalBtn?.addEventListener('click', () => this.openSettingsModal());
+    this.dom.settingsModalCloseBtn?.addEventListener('click', () => this.closeModal(this.dom.settingsModal));
+    this.dom.settingsCancelBtn?.addEventListener('click', () => this.closeModal(this.dom.settingsModal));
+    this.dom.settingsSaveBtn?.addEventListener('click', () => this.saveSettings());
+    this.dom.settingsForceSyncBtn?.addEventListener('click', () => this.forceSyncFromSettingsModal());
 
     // Real-time search
     this.dom.searchInput?.addEventListener('input', (e) => {
@@ -360,7 +397,7 @@ class TrophyVaultApp {
     this.dom.shareModalCloseBtn?.addEventListener('click', () => this.closeModal(this.dom.shareModal));
 
     // Close modal on backdrop click
-    [this.dom.gameModal, this.dom.shareModal, this.dom.avatarModal].forEach(modal => {
+    [this.dom.gameModal, this.dom.shareModal, this.dom.avatarModal, this.dom.settingsModal].forEach(modal => {
       modal?.addEventListener('click', (e) => {
         if (e.target === modal) this.closeModal(modal);
       });
@@ -372,6 +409,7 @@ class TrophyVaultApp {
         if (this.dom.gameModal && this.dom.gameModal.style.display !== 'none') this.closeModal(this.dom.gameModal);
         if (this.dom.shareModal && this.dom.shareModal.style.display !== 'none') this.closeModal(this.dom.shareModal);
         if (this.dom.avatarModal && this.dom.avatarModal.style.display !== 'none') this.closeModal(this.dom.avatarModal);
+        if (this.dom.settingsModal && this.dom.settingsModal.style.display !== 'none') this.closeModal(this.dom.settingsModal);
       }
     });
 
@@ -461,11 +499,21 @@ class TrophyVaultApp {
 
       source.addEventListener('update', () => {
         this.loadData({ silent: true });
+        this.refreshSettingsStatus();
+        if (this.steamSyncActive) {
+          this.setSteamSyncUiState(false);
+          this.showToast('Steam library synced!', 'Dashboard refreshed with latest data.');
+        }
       });
 
       source.addEventListener('message', (event) => {
         if (event.data === 'refresh' || event.data === 'update') {
           this.loadData({ silent: true });
+          this.refreshSettingsStatus();
+          if (this.steamSyncActive) {
+            this.setSteamSyncUiState(false);
+            this.showToast('Steam library synced!', 'Dashboard refreshed with latest data.');
+          }
         }
       });
 
@@ -1392,6 +1440,210 @@ class TrophyVaultApp {
         delBtn.textContent = 'Remove';
       }
     }
+  }
+
+  /**
+   * Fetch and cache Two Settings status
+   */
+  async refreshSettingsStatus() {
+    const settings = await this.api.getSettings();
+    if (!settings) return null;
+    this.settingsCache = settings;
+
+    if (settings.steam?.sync_in_progress) {
+      this.setSteamSyncUiState(true);
+      this.startSyncPolling();
+    } else if (this.steamSyncActive) {
+      this.setSteamSyncUiState(false);
+    }
+    return settings;
+  }
+
+  /**
+   * Update visual state of the Sync Steam button
+   */
+  setSteamSyncUiState(syncing) {
+    this.steamSyncActive = syncing;
+    if (this.dom.syncSteamBtn) {
+      this.dom.syncSteamBtn.classList.toggle('syncing', syncing);
+      this.dom.syncSteamBtn.disabled = syncing;
+    }
+    if (this.dom.syncSteamBtnText) {
+      this.dom.syncSteamBtnText.textContent = syncing ? 'Syncing...' : 'Sync Steam';
+    }
+  }
+
+  /**
+   * Poll settings status while a background Steam sync is active (SSE backup)
+   */
+  startSyncPolling() {
+    if (this.syncPollTimer) return;
+    let ticks = 0;
+    this.syncPollTimer = setInterval(async () => {
+      ticks += 1;
+      const settings = await this.api.getSettings();
+      if (settings) {
+        this.settingsCache = settings;
+        if (!settings.steam?.sync_in_progress) {
+          clearInterval(this.syncPollTimer);
+          this.syncPollTimer = null;
+          if (this.steamSyncActive) {
+            this.setSteamSyncUiState(false);
+            await this.loadData({ silent: true });
+            if (settings.steam?.last_sync_status === 'ok') {
+              this.showToast('Steam library synced!', settings.steam?.last_sync_message || '');
+            } else if (settings.steam?.last_sync_status === 'error') {
+              this.showToast('Steam sync failed', settings.steam?.last_sync_message || 'Check Settings');
+            }
+          }
+          return;
+        }
+      }
+      if (ticks >= 60) {
+        clearInterval(this.syncPollTimer);
+        this.syncPollTimer = null;
+        this.setSteamSyncUiState(false);
+      }
+    }, 3000);
+  }
+
+  /**
+   * Trigger non-blocking Steam sync on dashboard open/refresh or manual click
+   */
+  async triggerSteamAutoSync({ auto = true, force = false, password = '' } = {}) {
+    try {
+      const res = await this.api.syncSteam({ force, password });
+      if (res.status === 'started' || res.status === 'in_progress') {
+        this.setSteamSyncUiState(true);
+        this.startSyncPolling();
+        if (!auto) {
+          this.showToast('Steam sync started', 'Fetching games & trophies in background...');
+        }
+      } else if (res.status === 'cooldown' && !auto) {
+        const secs = res.cooldown_remaining_secs || 0;
+        const mins = Math.floor(secs / 60);
+        const rem = secs % 60;
+        const waitText = mins > 0 ? `${mins}m ${rem}s` : `${rem}s`;
+        this.showToast('Steam sync on cooldown', `Next auto-sync in ${waitText} (use Settings for Force Sync).`);
+      } else if (res.status === 'not_configured' && !auto) {
+        this.showToast('Steam API key missing', 'Configure STEAM_API_KEY in Settings.');
+        this.openSettingsModal();
+      }
+    } catch (err) {
+      if (!auto) {
+        this.showToast('Steam sync failed', err.message || 'Unknown error');
+      }
+    }
+  }
+
+  /**
+   * Open Admin-Protected Settings Modal
+   */
+  async openSettingsModal() {
+    const settings = (await this.refreshSettingsStatus()) || this.settingsCache;
+    if (settings) {
+      const steam = settings.steam || {};
+      const cr = settings.cloudredirect || {};
+
+      if (this.dom.settingsSteamId) this.dom.settingsSteamId.value = steam.steam_id || '76561198423209668';
+      if (this.dom.settingsCooldownSecs) this.dom.settingsCooldownSecs.value = steam.cooldown_secs ?? 300;
+      if (this.dom.settingsSteamApiKey) {
+        this.dom.settingsSteamApiKey.value = '';
+        this.dom.settingsSteamApiKey.placeholder = steam.api_key_configured
+          ? 'Configured (leave blank to keep existing key)'
+          : 'Enter Steam Web API key';
+      }
+
+      if (this.dom.steamKeyStatusPill) {
+        this.dom.steamKeyStatusPill.textContent = steam.api_key_configured ? 'CONFIGURED' : 'NOT CONFIGURED';
+        this.dom.steamKeyStatusPill.className = `hud-status-pill ${steam.api_key_configured ? 'pill-ok' : 'pill-warn'}`;
+      }
+
+      if (this.dom.steamSyncMetaText) {
+        const lastAt = steam.last_sync_at ? formatTrophyUnlockTime(steam.last_sync_at) : 'Never';
+        const msg = steam.last_sync_message ? ` • ${steam.last_sync_message}` : '';
+        this.dom.steamSyncMetaText.textContent = `Last sync: ${lastAt}${msg}`;
+      }
+
+      if (this.dom.settingsCrUrl) this.dom.settingsCrUrl.value = cr.api_url || '';
+      if (this.dom.settingsCrKey) {
+        this.dom.settingsCrKey.value = '';
+        this.dom.settingsCrKey.placeholder = cr.api_key_configured
+          ? 'Configured (leave blank to keep existing key)'
+          : 'Optional CloudRedirect API key';
+      }
+      if (this.dom.crStatusPill) {
+        this.dom.crStatusPill.textContent = cr.configured ? 'CONFIGURED (STANDBY)' : 'STANDBY PLACEHOLDER';
+        this.dom.crStatusPill.className = `hud-status-pill ${cr.configured ? 'pill-ok' : 'pill-muted'}`;
+      }
+    }
+
+    const cachedPass = sessionStorage.getItem('trophyvault_admin_pass');
+    if (this.dom.settingsAdminPassword && cachedPass) {
+      this.dom.settingsAdminPassword.value = cachedPass;
+    }
+
+    this.openModal(this.dom.settingsModal);
+  }
+
+  /**
+   * Save Two Settings (Steam API + CloudRedirect placeholder)
+   */
+  async saveSettings() {
+    const password = this.dom.settingsAdminPassword?.value.trim();
+    if (!password) {
+      this.showToast('Admin Password required', 'Enter Admin Password to save settings.');
+      this.dom.settingsAdminPassword?.focus();
+      return;
+    }
+
+    const payload = {
+      steam_id: this.dom.settingsSteamId?.value.trim() || '76561198423209668',
+      steam_sync_cooldown_secs: Number(this.dom.settingsCooldownSecs?.value ?? 300),
+      cloudredirect_api_url: this.dom.settingsCrUrl?.value.trim() || '',
+    };
+
+    const steamKey = this.dom.settingsSteamApiKey?.value.trim();
+    if (steamKey) payload.steam_api_key = steamKey;
+
+    const crKey = this.dom.settingsCrKey?.value.trim();
+    if (crKey) payload.cloudredirect_api_key = crKey;
+
+    const btn = this.dom.settingsSaveBtn;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+    }
+
+    try {
+      const updated = await this.api.updateSettings(payload, password);
+      sessionStorage.setItem('trophyvault_admin_pass', password);
+      this.settingsCache = updated;
+      this.showToast('Settings saved', 'Configuration persisted to SQLite.');
+      this.closeModal(this.dom.settingsModal);
+    } catch (err) {
+      this.showToast('Failed to save settings', err.message || 'Check Admin Password');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Save Settings';
+      }
+    }
+  }
+
+  /**
+   * Force immediate Steam sync from Settings Modal
+   */
+  async forceSyncFromSettingsModal() {
+    const password = this.dom.settingsAdminPassword?.value.trim();
+    if (!password) {
+      this.showToast('Admin Password required', 'Enter Admin Password to force sync.');
+      this.dom.settingsAdminPassword?.focus();
+      return;
+    }
+    sessionStorage.setItem('trophyvault_admin_pass', password);
+    this.closeModal(this.dom.settingsModal);
+    await this.triggerSteamAutoSync({ auto: false, force: true, password });
   }
 
   /**

@@ -1,10 +1,9 @@
 [workspace]
 members = [
     "crates/core",
-    "crates/desktop",
     "crates/server",
 ]
-default-members = ["crates/desktop"]
+default-members = ["crates/server"]
 resolver = "2"
 
 [profile.release]

@@ -18,26 +18,26 @@ use trophyvault_server::{
 fn create_test_db() -> LibraryDatabase {
     let mut games = HashMap::new();
     games.insert(
-        "bloodborne".to_string(),
+        "374320".to_string(),
         SavedGameEntry {
-            id: "bloodborne".to_string(),
-            name: "Bloodborne".to_string(),
-            platform: "PC Port / Recomp".to_string(),
-            appid: Some("2485153835".to_string()),
-            unlocked: 40,
-            total: 40,
+            id: "374320".to_string(),
+            name: "DARK SOULS III".to_string(),
+            platform: "Steam".to_string(),
+            appid: Some("374320".to_string()),
+            unlocked: 43,
+            total: 43,
             pct: 100,
             platinum: true,
             base_playtime_minutes: 0,
             playtime_minutes: 5400,
             last_played: Some(1730000000),
-            source: "manual".to_string(),
+            source: "steam".to_string(),
             last_scanned: 1730000000,
             trophies: vec![SavedTrophy {
                 id: "0".to_string(),
-                name: "Bloodborne".to_string(),
-                description: "All trophies unlocked".to_string(),
-                grade: "Platinum".to_string(),
+                name: "The Dark Soul".to_string(),
+                description: "All achievements unlocked".to_string(),
+                grade: String::new(),
                 unlocked: true,
                 unlocked_time: Some(1730000000),
             }],
@@ -147,8 +147,8 @@ async fn test_stats_endpoint() {
     assert_eq!(stats["has_avatar"], false);
     assert_eq!(stats["total_games"], 2);
     assert_eq!(stats["perfect_games"], 1);
-    assert_eq!(stats["total_achievements"], 70);
-    assert_eq!(stats["unlocked_achievements"], 55);
+    assert_eq!(stats["total_achievements"], 73);
+    assert_eq!(stats["unlocked_achievements"], 58);
 }
 
 #[tokio::test]
@@ -264,8 +264,8 @@ async fn test_games_endpoint() {
     let games: Vec<serde_json::Value> = serde_json::from_slice(&body_bytes).unwrap();
 
     assert_eq!(games.len(), 2);
-    // Highest playtime first (Bloodborne with 5400m)
-    assert_eq!(games[0]["name"], "Bloodborne");
+    // Highest playtime first (DARK SOULS III with 5400m)
+    assert_eq!(games[0]["name"], "DARK SOULS III");
     assert_eq!(games[0]["pct"], 100);
     assert_eq!(games[0]["platinum"], true);
 }
@@ -478,7 +478,7 @@ async fn test_default_fallback_html() {
 async fn test_incremental_update_sync_preserves_unmentioned_games() {
     let (app, _temp, api_key) = setup_test_app();
 
-    // Initial server db has "bloodborne" (A) and "palworld" (B)
+    // Initial server db has "374320" (A) and "palworld" (B)
     let games_req = Request::builder().uri("/api/games").method("GET").body(Body::empty()).unwrap();
     let games_res = app.clone().oneshot(games_req).await.unwrap();
     assert_eq!(games_res.status(), StatusCode::OK);
@@ -495,22 +495,22 @@ async fn test_incremental_update_sync_preserves_unmentioned_games() {
         games: HashMap::new(),
     };
 
-    // A: bloodborne updated
+    // A: 374320 updated
     payload.games.insert(
-        "bloodborne".to_string(),
+        "374320".to_string(),
         SavedGameEntry {
-            id: "bloodborne".to_string(),
-            name: "Bloodborne Remastered".to_string(),
-            platform: "PC Port / Recomp".to_string(),
-            appid: Some("2485153835".to_string()),
-            unlocked: 40,
-            total: 40,
+            id: "374320".to_string(),
+            name: "DARK SOULS III: Deluxe".to_string(),
+            platform: "Steam".to_string(),
+            appid: Some("374320".to_string()),
+            unlocked: 43,
+            total: 43,
             pct: 100,
             platinum: true,
             base_playtime_minutes: 0,
             playtime_minutes: 9999,
             last_played: Some(1730500000),
-            source: "manual".to_string(),
+            source: "steam".to_string(),
             last_scanned: 1730500000,
             trophies: Vec::new(),
         },
@@ -558,21 +558,21 @@ async fn test_incremental_update_sync_preserves_unmentioned_games() {
 
     assert_eq!(final_games.len(), 3);
     let ids: Vec<&str> = final_games.iter().map(|g| g["id"].as_str().unwrap()).collect();
-    assert!(ids.contains(&"bloodborne"));
+    assert!(ids.contains(&"374320"));
     assert!(ids.contains(&"palworld")); // B preserved!
     assert!(ids.contains(&"eldenring")); // C added!
 
     // Verify A was updated
-    let bb = final_games.iter().find(|g| g["id"] == "bloodborne").unwrap();
-    assert_eq!(bb["name"], "Bloodborne Remastered");
-    assert_eq!(bb["playtime_minutes"], 9999);
+    let ds3 = final_games.iter().find(|g| g["id"] == "374320").unwrap();
+    assert_eq!(ds3["name"], "DARK SOULS III: Deluxe");
+    assert_eq!(ds3["playtime_minutes"], 9999);
 }
 
 #[tokio::test]
 async fn test_full_sync_overwrites_entire_games_database() {
     let (app, _temp, api_key) = setup_test_app();
 
-    // Initial server db has "bloodborne" (A) and "palworld" (B)
+    // Initial server db has "374320" (A) and "palworld" (B)
     // Client sends full sync payload with ONLY game C ("eldenring")
     let mut payload = LibraryDatabase {
         version: 1,
@@ -808,7 +808,7 @@ async fn test_server_migrates_existing_json_to_sqlite_on_startup() {
     let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
     let games: Vec<serde_json::Value> = serde_json::from_slice(&body_bytes).unwrap();
     assert_eq!(games.len(), 2);
-    assert_eq!(games[0]["id"], "bloodborne");
+    assert_eq!(games[0]["id"], "374320");
     assert_eq!(games[0]["playtime_minutes"], 5400);
 
     // 5. Verify /api/stats reflects the migrated games and preferences
@@ -858,11 +858,11 @@ async fn test_server_config_path_resolution_and_migration() {
 async fn test_server_playtime_protection_update_mode() {
     let (app, _temp, api_key) = setup_test_app();
 
-    // In initial setup, Bloodborne has 5400 minutes.
+    // In initial setup, DARK SOULS III has 5400 minutes.
     // Client attempts to sync payload with lower playtime (e.g. 120 minutes)
     let mut payload = create_test_db();
-    if let Some(bb) = payload.games.get_mut("bloodborne") {
-        bb.playtime_minutes = 120;
+    if let Some(ds3) = payload.games.get_mut("374320") {
+        ds3.playtime_minutes = 120;
     }
 
     let req = Request::builder()
@@ -881,19 +881,19 @@ async fn test_server_playtime_protection_update_mode() {
     let games_res = app.oneshot(games_req).await.unwrap();
     let bytes = games_res.into_body().collect().await.unwrap().to_bytes();
     let games: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
-    let bb = games.iter().find(|g| g["id"] == "bloodborne").unwrap();
-    assert_eq!(bb["playtime_minutes"], 5400);
+    let ds3 = games.iter().find(|g| g["id"] == "374320").unwrap();
+    assert_eq!(ds3["playtime_minutes"], 5400);
 }
 
 #[tokio::test]
 async fn test_server_playtime_protection_full_mode() {
     let (app, _temp, api_key) = setup_test_app();
 
-    // In initial setup, Bloodborne has 5400 minutes.
+    // In initial setup, DARK SOULS III has 5400 minutes.
     // Client attempts a full sync with lower playtime (e.g. 0 minutes)
     let mut payload = create_test_db();
-    if let Some(bb) = payload.games.get_mut("bloodborne") {
-        bb.playtime_minutes = 0;
+    if let Some(ds3) = payload.games.get_mut("374320") {
+        ds3.playtime_minutes = 0;
     }
 
     let req = Request::builder()
@@ -912,8 +912,8 @@ async fn test_server_playtime_protection_full_mode() {
     let games_res = app.oneshot(games_req).await.unwrap();
     let bytes = games_res.into_body().collect().await.unwrap().to_bytes();
     let games: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
-    let bb = games.iter().find(|g| g["id"] == "bloodborne").unwrap();
-    assert_eq!(bb["playtime_minutes"], 5400);
+    let ds3 = games.iter().find(|g| g["id"] == "374320").unwrap();
+    assert_eq!(ds3["playtime_minutes"], 5400);
 }
 
 #[tokio::test]
@@ -921,7 +921,7 @@ async fn test_game_trophies_endpoint() {
     let (app, _temp, _key) = setup_test_app();
 
     let req = Request::builder()
-        .uri("/api/games/bloodborne/trophies")
+        .uri("/api/games/374320/trophies")
         .method("GET")
         .body(Body::empty())
         .unwrap();
@@ -933,8 +933,8 @@ async fn test_game_trophies_endpoint() {
     let trophies: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
     assert!(!trophies.is_empty());
     assert_eq!(trophies[0]["id"], "0");
-    assert_eq!(trophies[0]["name"], "Bloodborne");
-    assert_eq!(trophies[0]["grade"], "Platinum");
+    assert_eq!(trophies[0]["name"], "The Dark Soul");
+    assert_eq!(trophies[0]["grade"], "");
     assert_eq!(trophies[0]["unlocked"], true);
 }
 
@@ -943,7 +943,7 @@ async fn test_single_game_detail_endpoint() {
     let (app, _temp, _key) = setup_test_app();
 
     let req = Request::builder()
-        .uri("/api/games/bloodborne")
+        .uri("/api/games/374320")
         .method("GET")
         .body(Body::empty())
         .unwrap();
@@ -953,9 +953,9 @@ async fn test_single_game_detail_endpoint() {
 
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     let game: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(game["id"], "bloodborne");
-    assert_eq!(game["name"], "Bloodborne");
-    assert_eq!(game["trophies"][0]["name"], "Bloodborne");
+    assert_eq!(game["id"], "374320");
+    assert_eq!(game["name"], "DARK SOULS III");
+    assert_eq!(game["trophies"][0]["name"], "The Dark Soul");
 }
 
 #[tokio::test]
@@ -975,11 +975,21 @@ async fn test_settings_get_never_exposes_secrets_and_defaults() {
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
     assert_eq!(json["steam"]["api_key_configured"], false);
+    assert_eq!(json["steam"]["api_key_source"], "unset");
+    assert_eq!(json["steam"]["api_key_from_env"], false);
     assert_eq!(json["steam"]["steam_id"], "76561198423209668");
+    assert_eq!(json["steam"]["steam_id_source"], "default");
+    assert_eq!(json["steam"]["steam_id_from_env"], false);
     assert_eq!(json["steam"]["cooldown_secs"], 300);
+    assert_eq!(json["steam"]["cooldown_source"], "default");
+    assert_eq!(json["steam"]["cooldown_from_env"], false);
     assert_eq!(json["steam"]["sync_in_progress"], false);
     assert_eq!(json["cloudredirect"]["configured"], false);
+    assert_eq!(json["cloudredirect"]["api_url_source"], "unset");
+    assert_eq!(json["cloudredirect"]["api_url_from_env"], false);
     assert_eq!(json["cloudredirect"]["api_key_configured"], false);
+    assert_eq!(json["cloudredirect"]["api_key_source"], "unset");
+    assert_eq!(json["cloudredirect"]["api_key_from_env"], false);
     assert_eq!(json["cloudredirect"]["status"], "placeholder");
     assert!(json["steam"].get("api_key").is_none());
     assert!(json["cloudredirect"].get("api_key").is_none());
@@ -1066,13 +1076,19 @@ async fn test_settings_update_requires_admin_and_persists_to_sqlite() {
 
     let json: serde_json::Value = serde_json::from_str(&body_str).unwrap();
     assert_eq!(json["steam"]["api_key_configured"], true);
+    assert_eq!(json["steam"]["api_key_source"], "browser");
+    assert_eq!(json["steam"]["api_key_from_env"], false);
     assert_eq!(json["steam"]["steam_id"], "76561198000012345");
+    assert_eq!(json["steam"]["steam_id_source"], "browser");
     assert_eq!(json["steam"]["cooldown_secs"], 120);
+    assert_eq!(json["steam"]["cooldown_source"], "browser");
     assert_eq!(json["cloudredirect"]["configured"], true);
     assert_eq!(json["cloudredirect"]["api_url"], "https://cr.mohandl3g.ly");
+    assert_eq!(json["cloudredirect"]["api_url_source"], "browser");
     assert_eq!(json["cloudredirect"]["api_key_configured"], true);
+    assert_eq!(json["cloudredirect"]["api_key_source"], "browser");
 
-    // 4. Reload AppState from disk and verify SQLite metadata persistence survives restart
+    // 4. Reload AppState from disk and verify SQLite metadata persistence & browser source survive restart
     let reloaded_state = AppState::new(&config);
     assert_eq!(
         reloaded_state.settings.steam_api_key.as_deref(),
@@ -1088,6 +1104,25 @@ async fn test_settings_update_requires_admin_and_persists_to_sqlite() {
         reloaded_state.settings.cloudredirect_api_key.as_deref(),
         Some("cr-secret-999")
     );
+    assert_eq!(reloaded_state.settings_sources.steam_api_key.as_str(), "browser");
+    assert_eq!(reloaded_state.settings_sources.steam_id.as_str(), "browser");
+    assert_eq!(
+        reloaded_state.settings_sources.steam_sync_cooldown_secs.as_str(),
+        "browser"
+    );
+
+    // 5. Simulate .env change on restart: STEAM_API_KEY changed -> .env wins and source becomes "env",
+    // while unchanged defaults (STEAM_ID / cooldown) do NOT override browser edits!
+    let mut env_changed_config = config.clone();
+    env_changed_config.steam_api_key = Some("new-env-key-777".to_string());
+    let env_state = AppState::new(&env_changed_config);
+    assert_eq!(
+        env_state.settings.steam_api_key.as_deref(),
+        Some("new-env-key-777")
+    );
+    assert_eq!(env_state.settings_sources.steam_api_key.as_str(), "env");
+    assert_eq!(env_state.settings.steam_id, "76561198000012345");
+    assert_eq!(env_state.settings_sources.steam_id.as_str(), "browser");
 }
 
 #[tokio::test]
@@ -1243,7 +1278,7 @@ async fn test_steam_sync_mock_server_ingestion_monotonic_and_cooldown() {
         ..ServerConfig::default()
     };
 
-    // Seed DB with Bloodborne (5400m) + Palworld (2400m)
+    // Seed DB with DARK SOULS III (5400m) + Palworld (2400m)
     let state = Arc::new(RwLock::new(AppState::with_database(&config, create_test_db())));
     let app = create_app(state.clone(), static_dir);
 
@@ -1266,7 +1301,7 @@ async fn test_steam_sync_mock_server_ingestion_monotonic_and_cooldown() {
     assert_eq!(sync_json["games_fetched"], 3);
     assert_eq!(sync_json["games_with_trophies"], 1);
     assert_eq!(sync_json["achievements_skipped_or_private"], 2);
-    assert_eq!(sync_json["total_games_in_db"], 4); // bloodborne + palworld + BG3 + private game
+    assert_eq!(sync_json["total_games_in_db"], 4); // 374320 + palworld + BG3 + private game
     assert_eq!(owned_calls.load(Ordering::SeqCst), 1);
 
     // 2. Verify SQLite games, trophies, and metadata tables
@@ -1279,16 +1314,15 @@ async fn test_steam_sync_mock_server_ingestion_monotonic_and_cooldown() {
     let games: Vec<serde_json::Value> = serde_json::from_slice(&games_bytes).unwrap();
     assert_eq!(games.len(), 4);
 
-    // Bloodborne preserved
-    let bb = games.iter().find(|g| g["id"] == "bloodborne").unwrap();
-    assert_eq!(bb["playtime_minutes"], 5400);
-    assert_eq!(bb["source"], "manual");
+    // DARK SOULS III preserved
+    let ds3 = games.iter().find(|g| g["id"] == "374320").unwrap();
+    assert_eq!(ds3["playtime_minutes"], 5400);
 
     // Palworld playtime protected at MAX(2400, 100) = 2400
     let pw = games.iter().find(|g| g["appid"] == "1623730").unwrap();
     assert_eq!(pw["playtime_minutes"], 2400);
 
-    // BG3 trophies ingested
+    // BG3 trophies ingested with empty grade (no Bronze/Silver/Gold/Platinum tiers)
     let bg3_trophies_res = app
         .clone()
         .oneshot(
@@ -1304,9 +1338,11 @@ async fn test_steam_sync_mock_server_ingestion_monotonic_and_cooldown() {
     let bg3_trophies: Vec<serde_json::Value> = serde_json::from_slice(&bg3_trophies_bytes).unwrap();
     assert_eq!(bg3_trophies.len(), 2);
     assert_eq!(bg3_trophies[0]["id"], "BG3_HERO");
+    assert_eq!(bg3_trophies[0]["grade"], "");
     assert_eq!(bg3_trophies[0]["unlocked"], true);
     assert_eq!(bg3_trophies[0]["unlocked_time"], 1732000100);
     assert_eq!(bg3_trophies[1]["id"], "BG3_SECRET");
+    assert_eq!(bg3_trophies[1]["grade"], "");
     assert_eq!(bg3_trophies[1]["unlocked"], false);
 
     // Metadata table persisted

@@ -15,10 +15,10 @@ services:
       - SLOGAN=${SLOGAN:-HUNTER}
       - DATABASE_PATH=/data/trophyvault.db
       - AVATAR_PATH=/data/avatar.png
-      # Setting 1: Steam Web API Ingestion
+      # Setting 1: Steam Web API Ingestion (leave empty in .env to configure via Browser UI / defaults)
       - STEAM_API_KEY=${STEAM_API_KEY:-}
-      - STEAM_ID=${STEAM_ID:-76561198423209668}
-      - STEAM_SYNC_COOLDOWN_SECS=${STEAM_SYNC_COOLDOWN_SECS:-300}
+      - STEAM_ID=${STEAM_ID:-}
+      - STEAM_SYNC_COOLDOWN_SECS=${STEAM_SYNC_COOLDOWN_SECS:-}
       # Setting 2: CloudRedirect API Placeholder (future integration)
       - CLOUDREDIRECT_API_URL=${CLOUDREDIRECT_API_URL:-}
       - CLOUDREDIRECT_API_KEY=${CLOUDREDIRECT_API_KEY:-}

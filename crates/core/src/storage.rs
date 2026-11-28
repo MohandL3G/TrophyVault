@@ -1,7 +1,6 @@
 //! Persistent JSON database and synchronization engine.
 //! Stored in `%APPDATA%\TrophyVault\library_database.json`.
 
-use crate::bloodborne::parse_bloodborne_user_dir;
 use crate::data::{AchievementsData, GameItem, LibraryStats, Preferences};
 use crate::steam::{
     find_active_steam_id, find_steam_dir, lookup_playtime, parse_localconfig_playtimes,
@@ -10,7 +9,7 @@ use crate::steam::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use crate::db::*;
@@ -418,14 +417,6 @@ pub fn load_or_create_database_for_user(steam_id: Option<&str>) -> LibraryDataba
     }
 
     // 3. Initialize fresh isolated database for this user
-    let default_user_dir = if cfg!(windows) {
-        r"C:\Games\Decomps\Bloodborne\user".to_string()
-    } else {
-        dirs::home_dir()
-            .map(|h| h.join("Games").join("Bloodborne").join("user").to_string_lossy().to_string())
-            .unwrap_or_else(|| "Games/Bloodborne/user".to_string())
-    };
-
     let mut db = LibraryDatabase {
         version: 1,
         last_updated: current_timestamp(),
@@ -433,40 +424,9 @@ pub fn load_or_create_database_for_user(steam_id: Option<&str>) -> LibraryDataba
             steam_id: steam_id.map(str::to_string),
             ..DatabasePreferences::default()
         },
-        manual_games: vec![
-            ManualGameSetting {
-                id: "bloodborne".to_string(),
-                name: "Bloodborne".to_string(),
-                platform: "PC Port / Recomp".to_string(),
-                parser_type: "bbport".to_string(),
-                user_dir: default_user_dir,
-                non_steam_appid: Some("2485153835".to_string()),
-                enabled: true,
-            },
-        ],
+        manual_games: Vec::new(),
         games: HashMap::new(),
     };
-
-    // Pre-seed Bloodborne with all 40 default trophies
-    db.games.insert(
-        "bloodborne".to_string(),
-        SavedGameEntry {
-            id: "bloodborne".to_string(),
-            name: "Bloodborne".to_string(),
-            platform: "PC Port / Recomp".to_string(),
-            appid: Some("2485153835".to_string()),
-            unlocked: 0,
-            total: 40,
-            pct: 0,
-            platinum: false,
-            base_playtime_minutes: 0,
-            playtime_minutes: 0,
-            last_played: None,
-            source: "manual".to_string(),
-            last_scanned: current_timestamp(),
-            trophies: crate::bloodborne::default_bloodborne_trophies(),
-        },
-    );
 
     // Attempt to seed from legacy Achievements app if dashboard-summary.json exists
     seed_from_legacy_achievements(&mut db);
@@ -598,8 +558,8 @@ pub fn save_database(db: &LibraryDatabase) -> Result<(), String> {
     save_database_for_user(db, db.preferences.steam_id.as_deref())
 }
 
-/// Run full library sync: scans configured manual games (Bloodborne),
-/// queries Steam localconfig.vdf for playtimes, discovers LuaTools and Non-Steam shortcuts.
+/// Run full library sync: queries Steam localconfig.vdf for playtimes,
+/// discovers LuaTools and Non-Steam shortcuts.
 ///
 /// **Crucial Retention Guarantee**:
 /// Previously recorded games are NEVER deleted during sync. Even if game folders or lua files
@@ -635,148 +595,6 @@ pub fn sync_library(db: &mut LibraryDatabase) -> SyncReport {
     } else {
         Vec::new()
     };
-
-    // Auto-link manual games with Non-Steam shortcuts (e.g. Bloodborne)
-    for sc in &shortcuts {
-        let sc_appid_str = sc.appid.to_string();
-        let sc_name_lower = sc.appname.to_lowercase();
-        for manual in &mut db.manual_games {
-            if manual.non_steam_appid.is_none() {
-                let id_lower = manual.id.to_lowercase();
-                let name_lower = manual.name.to_lowercase();
-                if sc_name_lower.contains(&id_lower)
-                    || name_lower.contains(&sc_name_lower)
-                    || sc_name_lower.contains(&name_lower)
-                {
-                    manual.non_steam_appid = Some(sc_appid_str.clone());
-                }
-            }
-        }
-    }
-
-    // 3. Scan configured Manual Games (e.g. Bloodborne)
-    let manual_configs = db.manual_games.clone();
-    for manual_cfg in manual_configs {
-        if !manual_cfg.enabled {
-            continue;
-        }
-
-        if manual_cfg.parser_type == "bbport" {
-            let user_path = Path::new(&manual_cfg.user_dir);
-            match parse_bloodborne_user_dir(user_path) {
-                Ok(res) => {
-                    report.manual_scanned += 1;
-                    let mut scanned_playtime = 0;
-                    let mut last_played = None;
-
-                    // Lookup playtime via Non-Steam AppID if specified
-                    if let Some(appid) = &manual_cfg.non_steam_appid {
-                        if let Some(usage) = lookup_playtime(&playtimes, appid) {
-                            scanned_playtime = usage.playtime_minutes;
-                            last_played = usage.last_played;
-                        }
-                    }
-
-                    // Existing entry check for previous AppID and playtime preservation
-                    let (mut base_playtime, prev_appid, existing_trophies, prev_playtime, prev_last_played) =
-                        if let Some(existing) = db.games.get(&manual_cfg.id) {
-                            (
-                                existing.base_playtime_minutes,
-                                existing.appid.clone(),
-                                existing.trophies.clone(),
-                                existing.playtime_minutes,
-                                existing.last_played,
-                            )
-                        } else {
-                            (0, None, Vec::new(), 0, None)
-                        };
-
-                    // If non-Steam shortcut's AppID changes or resets playtime to 0, preserve previously recorded playtime as base_playtime_minutes
-                    if manual_cfg.non_steam_appid != prev_appid && prev_appid.is_some() {
-                        base_playtime = base_playtime.max(prev_playtime);
-                    } else if scanned_playtime == 0 && prev_playtime > 0 {
-                        base_playtime = base_playtime.max(prev_playtime);
-                    }
-
-                    let final_playtime = (base_playtime + scanned_playtime).max(prev_playtime);
-
-                    let trophies = if !res.trophies.is_empty() {
-                        res.trophies
-                            .into_iter()
-                            .map(|t| SavedTrophy {
-                                id: t.id.to_string(),
-                                name: t.name,
-                                description: t.description,
-                                grade: crate::bloodborne::normalize_grade(&t.grade),
-                                unlocked: t.unlocked,
-                                unlocked_time: t.unlock_time.map(|ts| ts as i64),
-                            })
-                            .collect()
-                    } else if !existing_trophies.is_empty() {
-                        existing_trophies
-                    } else {
-                        crate::bloodborne::default_bloodborne_trophies()
-                    };
-
-                    let entry = SavedGameEntry {
-                        id: manual_cfg.id.clone(),
-                        name: manual_cfg.name.clone(),
-                        platform: manual_cfg.platform.clone(),
-                        appid: manual_cfg.non_steam_appid.clone(),
-                        unlocked: res.unlocked,
-                        total: res.total,
-                        pct: res.pct,
-                        platinum: res.platinum,
-                        base_playtime_minutes: base_playtime,
-                        playtime_minutes: final_playtime,
-                        last_played: last_played.or(prev_last_played),
-                        source: "manual".to_string(),
-                        last_scanned: now,
-                        trophies,
-                    };
-
-                    report.details.push(format!(
-                        "Synced {}: {}/{} ({}%) • Playtime: {} hrs",
-                        manual_cfg.name,
-                        res.unlocked,
-                        res.total,
-                        res.pct,
-                        final_playtime / 60
-                    ));
-
-                    db.games.insert(manual_cfg.id.clone(), entry);
-                }
-                Err(err) => {
-                    report.details.push(format!("Manual game {}: {}", manual_cfg.name, err));
-                    if let Some(existing) = db.games.get_mut(&manual_cfg.id) {
-                        if existing.trophies.is_empty() {
-                            existing.trophies = crate::bloodborne::default_bloodborne_trophies();
-                        }
-                    } else {
-                        db.games.insert(
-                            manual_cfg.id.clone(),
-                            SavedGameEntry {
-                                id: manual_cfg.id.clone(),
-                                name: manual_cfg.name.clone(),
-                                platform: manual_cfg.platform.clone(),
-                                appid: manual_cfg.non_steam_appid.clone(),
-                                unlocked: 0,
-                                total: 40,
-                                pct: 0,
-                                platinum: false,
-                                base_playtime_minutes: 0,
-                                playtime_minutes: 0,
-                                last_played: None,
-                                source: "manual".to_string(),
-                                last_scanned: now,
-                                trophies: crate::bloodborne::default_bloodborne_trophies(),
-                            },
-                        );
-                    }
-                }
-            }
-        }
-    }
 
     // 4. Scan LuaTools games from stplug-in
     if let Some(s_dir) = &steam_dir {
@@ -1251,13 +1069,7 @@ impl LibraryDatabase {
                     }
                 }
             } else {
-                let trophies = item.trophies.unwrap_or_else(|| {
-                    if item.id.eq_ignore_ascii_case("bloodborne") || item.name.eq_ignore_ascii_case("Bloodborne") {
-                        crate::bloodborne::default_bloodborne_trophies()
-                    } else {
-                        Vec::new()
-                    }
-                });
+                let trophies = item.trophies.unwrap_or_default();
                 self.games.insert(
                     item.id.clone(),
                     SavedGameEntry {
@@ -1644,9 +1456,9 @@ mod tests {
         assert_eq!(t1.unlocked_time, Some(1730000000));
 
         // Test deserializing when id is a string
-        let json_str = r#"{"id":"bloodborne_0","name":"Bloodborne","description":"All trophies","grade":"Platinum","unlocked":false}"#;
+        let json_str = r#"{"id":"ACH_FIRST","name":"First Achievement","description":"Unlock first achievement","grade":"","unlocked":false}"#;
         let t2: SavedTrophy = serde_json::from_str(json_str).unwrap();
-        assert_eq!(t2.id, "bloodborne_0");
+        assert_eq!(t2.id, "ACH_FIRST");
         assert!(!t2.unlocked);
         assert_eq!(t2.unlocked_time, None);
     }
@@ -1679,18 +1491,18 @@ mod tests {
 
                 let response_body = r#"[
                     {
-                        "id": "bloodborne",
-                        "name": "Bloodborne",
-                        "platform": "PC Port / Recomp",
-                        "appid": "2485153835",
-                        "unlocked": 40,
-                        "total": 40,
+                        "id": "1245620",
+                        "name": "ELDEN RING",
+                        "platform": "Steam",
+                        "appid": "1245620",
+                        "unlocked": 42,
+                        "total": 42,
                         "pct": 100,
                         "platinum": true,
                         "playtime_minutes": 5400,
                         "playtime_formatted": "90h 0m",
                         "last_played": 1732000000,
-                        "source": "manual",
+                        "source": "steam",
                         "last_scanned": 1732000100
                     }
                 ]"#;
@@ -1728,12 +1540,12 @@ mod tests {
         let res = result.unwrap();
         assert_eq!(res.restored_games, 1);
 
-        let bb = db.games.get("bloodborne").expect("Bloodborne must be in restored db");
-        assert_eq!(bb.name, "Bloodborne");
-        assert_eq!(bb.playtime_minutes, 5400);
-        assert_eq!(bb.base_playtime_minutes, 5400); // base_playtime_minutes must be set from remote!
-        assert_eq!(bb.unlocked, 40);
-        assert_eq!(bb.total, 40);
-        assert!(bb.platinum);
+        let er = db.games.get("1245620").expect("ELDEN RING must be in restored db");
+        assert_eq!(er.name, "ELDEN RING");
+        assert_eq!(er.playtime_minutes, 5400);
+        assert_eq!(er.base_playtime_minutes, 5400); // base_playtime_minutes must be set from remote!
+        assert_eq!(er.unlocked, 42);
+        assert_eq!(er.total, 42);
+        assert!(er.platinum);
     }
 }

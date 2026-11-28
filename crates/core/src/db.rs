@@ -657,26 +657,26 @@ mod tests {
         );
 
         games.insert(
-            "bloodborne".to_string(),
+            "1245620".to_string(),
             SavedGameEntry {
-                id: "bloodborne".to_string(),
-                name: "Bloodborne".to_string(),
-                platform: "PC Port / Recomp".to_string(),
-                appid: Some("2485153835".to_string()),
-                unlocked: 40,
-                total: 40,
+                id: "1245620".to_string(),
+                name: "ELDEN RING".to_string(),
+                platform: "Steam".to_string(),
+                appid: Some("1245620".to_string()),
+                unlocked: 42,
+                total: 42,
                 pct: 100,
                 platinum: true,
                 base_playtime_minutes: 0,
                 playtime_minutes: 8400,
                 last_played: Some(1732100000),
-                source: "manual".to_string(),
+                source: "steam".to_string(),
                 last_scanned: 1732100500,
                 trophies: vec![SavedTrophy {
                     id: "1".to_string(),
-                    name: "Bloodborne".to_string(),
-                    description: "All trophies acquired".to_string(),
-                    grade: "Platinum".to_string(),
+                    name: "Elden Ring".to_string(),
+                    description: "Obtained all achievements".to_string(),
+                    grade: String::new(),
                     unlocked: true,
                     unlocked_time: Some(1732100400),
                 }],
@@ -688,7 +688,7 @@ mod tests {
             last_updated: 1732100600,
             preferences: DatabasePreferences {
                 username: "MohandL3G".to_string(),
-                title_line: "Hunter of Yharnam • Master Achiever".to_string(),
+                title_line: "Master Achiever".to_string(),
                 theme: "Gold".to_string(),
                 steam_path: Some("/home/mohand/.steam/steam".to_string()),
                 steam_id: Some("76561198000000000".to_string()),
@@ -704,15 +704,7 @@ mod tests {
                     sync_mode: SyncMode::Full,
                 }),
             },
-            manual_games: vec![ManualGameSetting {
-                id: "bloodborne".to_string(),
-                name: "Bloodborne".to_string(),
-                platform: "PC Port / Recomp".to_string(),
-                parser_type: "bbport".to_string(),
-                user_dir: "/path/to/bb/user".to_string(),
-                non_steam_appid: Some("2485153835".to_string()),
-                enabled: true,
-            }],
+            manual_games: Vec::new(),
             games,
         }
     }
@@ -773,8 +765,6 @@ mod tests {
         assert_eq!(sync_loaded.sync_mode, sync_sample.sync_mode);
 
         assert_eq!(loaded.manual_games.len(), sample.manual_games.len());
-        assert_eq!(loaded.manual_games[0].id, sample.manual_games[0].id);
-        assert_eq!(loaded.manual_games[0].name, sample.manual_games[0].name);
 
         assert_eq!(loaded.games.len(), sample.games.len());
         let bg3 = loaded.games.get("1086940").expect("BG3 must be present");
@@ -786,11 +776,11 @@ mod tests {
         assert_eq!(bg3.trophies.len(), 2);
         assert_eq!(bg3.trophies[0].name, "All's Well That Ends Well");
 
-        let bb = loaded.games.get("bloodborne").expect("BB must be present");
-        assert_eq!(bb.name, "Bloodborne");
-        assert_eq!(bb.unlocked, 40);
-        assert_eq!(bb.trophies.len(), 1);
-        assert_eq!(bb.trophies[0].grade, "Platinum");
+        let er = loaded.games.get("1245620").expect("ELDEN RING must be present");
+        assert_eq!(er.name, "ELDEN RING");
+        assert_eq!(er.unlocked, 42);
+        assert_eq!(er.trophies.len(), 1);
+        assert_eq!(er.trophies[0].grade, "");
     }
 
     #[test]
@@ -839,7 +829,7 @@ mod tests {
         let loaded = load_library_database_from_sqlite(&conn).unwrap();
         assert_eq!(loaded.games.len(), 2);
         assert_eq!(loaded.preferences.username, "MohandL3G");
-        assert_eq!(loaded.manual_games.len(), 1);
+        assert_eq!(loaded.manual_games.len(), 0);
 
         // 3. Re-running migration is idempotent and does not corrupt or overwrite
         let result2 = migrate_json_to_sqlite_if_needed(&json_path, &db_path);
@@ -885,7 +875,7 @@ mod tests {
         // Create SQLite database with 1 game
         let mut conn = open_or_create_db(&db_path).unwrap();
         let mut initial_db = sample_database();
-        initial_db.games.remove("bloodborne"); // only BG3 in sqlite
+        initial_db.games.remove("1245620"); // only BG3 in sqlite
         save_library_database_to_sqlite(&mut conn, &initial_db).unwrap();
         assert_eq!(get_game_count(&conn).unwrap(), 1);
 
@@ -909,25 +899,25 @@ mod tests {
         let trophies = vec![
             SavedTrophy {
                 id: "0".to_string(),
-                name: "Bloodborne".to_string(),
-                description: "All trophies acquired".to_string(),
-                grade: "Platinum".to_string(),
+                name: "Elden Ring".to_string(),
+                description: "Obtained all achievements".to_string(),
+                grade: String::new(),
                 unlocked: true,
                 unlocked_time: Some(1730000000),
             },
             SavedTrophy {
                 id: "1".to_string(),
-                name: "Yharnam Sunrise".to_string(),
-                description: "You lived through the hunt".to_string(),
-                grade: "Gold".to_string(),
+                name: "Shardbearer Godrick".to_string(),
+                description: "Defeated Shardbearer Godrick".to_string(),
+                grade: String::new(),
                 unlocked: false,
                 unlocked_time: None,
             },
         ];
 
-        save_trophies_for_game(&conn, "bloodborne", &trophies).unwrap();
+        save_trophies_for_game(&conn, "1245620", &trophies).unwrap();
 
-        let queried = get_trophies_for_game(&conn, "bloodborne").unwrap();
+        let queried = get_trophies_for_game(&conn, "1245620").unwrap();
         assert_eq!(queried.len(), 2);
         // Unlocked should be first due to ORDER BY unlocked DESC
         assert_eq!(queried[0].id, "0");
@@ -935,12 +925,12 @@ mod tests {
         assert_eq!(queried[1].id, "1");
         assert!(!queried[1].unlocked);
 
-        let stats = get_trophy_stats_for_game(&conn, "bloodborne").unwrap();
+        let stats = get_trophy_stats_for_game(&conn, "1245620").unwrap();
         assert_eq!(stats, (2, 1)); // (total, unlocked)
 
         let all = get_all_trophies(&conn).unwrap();
-        assert!(all.contains_key("bloodborne"));
-        assert_eq!(all["bloodborne"].len(), 2);
+        assert!(all.contains_key("1245620"));
+        assert_eq!(all["1245620"].len(), 2);
     }
 
     #[test]

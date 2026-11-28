@@ -1483,61 +1483,6 @@ body.hud-body {
   opacity: 0.88;
 }
 
-/* Grade Badges */
-.trophy-badge-col {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 2px;
-}
-
-.trophy-grade-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 44px;
-  height: 26px;
-  padding: 0 8px;
-  border-radius: 6px;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-/* Platinum (#00f3ff/silver) */
-.grade-platinum {
-  background: rgba(0, 243, 255, 0.14);
-  color: #00f3ff;
-  border: 1px solid rgba(0, 243, 255, 0.45);
-  box-shadow: 0 0 10px rgba(0, 243, 255, 0.25);
-}
-
-/* Gold (#ffc700) */
-.grade-gold {
-  background: rgba(255, 199, 0, 0.14);
-  color: #ffc700;
-  border: 1px solid rgba(255, 199, 0, 0.45);
-  box-shadow: 0 0 10px rgba(255, 199, 0, 0.2);
-}
-
-/* Silver (#94a3b8) */
-.grade-silver {
-  background: rgba(148, 163, 184, 0.14);
-  color: #94a3b8;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-}
-
-/* Bronze (#d97706) */
-.grade-bronze {
-  background: rgba(217, 119, 6, 0.14);
-  color: #d97706;
-  border: 1px solid rgba(217, 119, 6, 0.4);
-}
-
 /* Trophy Content & Info */
 .trophy-info {
   flex: 1;
@@ -2305,6 +2250,71 @@ body.hud-body {
 .hud-settings-modal-card {
   max-width: 720px;
   padding: 24px;
+}
+
+.hud-settings-notice {
+  background: rgba(0, 240, 255, 0.08);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 0.76rem;
+  color: var(--text-main);
+  line-height: 1.45;
+  margin-bottom: 14px;
+}
+
+.hud-settings-notice code {
+  color: var(--cyan);
+  background: rgba(0, 240, 255, 0.12);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.hud-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.hud-label-row .hud-form-label {
+  margin-bottom: 0;
+}
+
+.hud-source-badge {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.hud-source-badge.source-env {
+  background: rgba(255, 215, 0, 0.12);
+  color: var(--gold);
+  border-color: rgba(255, 215, 0, 0.35);
+}
+
+.hud-source-badge.source-browser {
+  background: rgba(0, 240, 255, 0.12);
+  color: var(--cyan);
+  border-color: rgba(0, 240, 255, 0.35);
+}
+
+.hud-source-badge.source-default {
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.hud-source-badge.source-unset {
+  background: rgba(139, 148, 158, 0.08);
+  color: var(--text-muted);
+  border-color: rgba(139, 148, 158, 0.22);
 }
 
 .hud-settings-sections {

@@ -26,6 +26,11 @@ pub mod meta_keys {
     pub const LAST_ENV_STEAM_SYNC_COOLDOWN_SECS: &str = "last_env_steam_sync_cooldown_secs";
     pub const LAST_ENV_CLOUDREDIRECT_API_URL: &str = "last_env_cloudredirect_api_url";
     pub const LAST_ENV_CLOUDREDIRECT_API_KEY: &str = "last_env_cloudredirect_api_key";
+    pub const SOURCE_STEAM_API_KEY: &str = "source_steam_api_key";
+    pub const SOURCE_STEAM_ID: &str = "source_steam_id";
+    pub const SOURCE_STEAM_SYNC_COOLDOWN_SECS: &str = "source_steam_sync_cooldown_secs";
+    pub const SOURCE_CLOUDREDIRECT_API_URL: &str = "source_cloudredirect_api_url";
+    pub const SOURCE_CLOUDREDIRECT_API_KEY: &str = "source_cloudredirect_api_key";
     pub const LAST_STEAM_SYNC_AT: &str = "last_steam_sync_at";
     pub const LAST_STEAM_SYNC_STATUS: &str = "last_steam_sync_status";
     pub const LAST_STEAM_SYNC_MESSAGE: &str = "last_steam_sync_message";
@@ -106,7 +111,9 @@ pub struct ServerConfig {
     // Setting 1: Steam Web API
     pub steam_api_key: Option<String>,
     pub steam_id: String,
+    pub steam_id_from_env: bool,
     pub steam_sync_cooldown_secs: u64,
+    pub cooldown_from_env: bool,
     pub steam_api_base_url: String,
     // Setting 2: CloudRedirect API Placeholder
     pub cloudredirect_api_url: Option<String>,
@@ -126,7 +133,9 @@ impl Default for ServerConfig {
             static_dir: PathBuf::from("static"),
             steam_api_key: None,
             steam_id: DEFAULT_STEAM_ID.to_string(),
+            steam_id_from_env: false,
             steam_sync_cooldown_secs: DEFAULT_STEAM_SYNC_COOLDOWN_SECS,
+            cooldown_from_env: false,
             steam_api_base_url: DEFAULT_STEAM_API_BASE_URL.to_string(),
             cloudredirect_api_url: None,
             cloudredirect_api_key: None,
@@ -248,11 +257,13 @@ impl ServerConfig {
         };
 
         let steam_api_key = non_empty_env("STEAM_API_KEY");
-        let steam_id = non_empty_env("STEAM_ID").unwrap_or_else(|| DEFAULT_STEAM_ID.to_string());
-        let steam_sync_cooldown_secs = std::env::var("STEAM_SYNC_COOLDOWN_SECS")
-            .ok()
-            .and_then(|v| v.trim().parse::<u64>().ok())
-            .unwrap_or(DEFAULT_STEAM_SYNC_COOLDOWN_SECS);
+        let env_steam_id = non_empty_env("STEAM_ID");
+        let steam_id_from_env = env_steam_id.is_some();
+        let steam_id = env_steam_id.unwrap_or_else(|| DEFAULT_STEAM_ID.to_string());
+        let env_cooldown = non_empty_env("STEAM_SYNC_COOLDOWN_SECS")
+            .and_then(|v| v.parse::<u64>().ok());
+        let cooldown_from_env = env_cooldown.is_some();
+        let steam_sync_cooldown_secs = env_cooldown.unwrap_or(DEFAULT_STEAM_SYNC_COOLDOWN_SECS);
         let steam_api_base_url = non_empty_env("STEAM_API_BASE_URL")
             .unwrap_or_else(|| DEFAULT_STEAM_API_BASE_URL.to_string());
 
@@ -270,10 +281,89 @@ impl ServerConfig {
             static_dir,
             steam_api_key,
             steam_id,
+            steam_id_from_env,
             steam_sync_cooldown_secs,
+            cooldown_from_env,
             steam_api_base_url,
             cloudredirect_api_url,
             cloudredirect_api_key,
+        }
+    }
+}
+
+/// Indicates where an active setting value was loaded from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingSource {
+    Env,
+    Browser,
+    Default,
+    Unset,
+}
+
+impl SettingSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SettingSource::Env => "env",
+            SettingSource::Browser => "browser",
+            SettingSource::Default => "default",
+            SettingSource::Unset => "unset",
+        }
+    }
+
+    pub fn is_env(self) -> bool {
+        matches!(self, SettingSource::Env)
+    }
+
+    fn metadata_tag(self) -> Option<&'static str> {
+        match self {
+            SettingSource::Env => Some("env"),
+            SettingSource::Browser => Some("browser"),
+            SettingSource::Default | SettingSource::Unset => None,
+        }
+    }
+}
+
+/// Active source provenance for each configurable setting.
+#[derive(Debug, Clone)]
+pub struct SettingsSources {
+    pub steam_api_key: SettingSource,
+    pub steam_id: SettingSource,
+    pub steam_sync_cooldown_secs: SettingSource,
+    pub cloudredirect_api_url: SettingSource,
+    pub cloudredirect_api_key: SettingSource,
+}
+
+impl SettingsSources {
+    pub fn from_config(config: &ServerConfig) -> Self {
+        let steam_id_from_env = config.steam_id_from_env || config.steam_id != DEFAULT_STEAM_ID;
+        let cooldown_from_env =
+            config.cooldown_from_env || config.steam_sync_cooldown_secs != DEFAULT_STEAM_SYNC_COOLDOWN_SECS;
+        Self {
+            steam_api_key: if config.steam_api_key.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false) {
+                SettingSource::Env
+            } else {
+                SettingSource::Unset
+            },
+            steam_id: if steam_id_from_env {
+                SettingSource::Env
+            } else {
+                SettingSource::Default
+            },
+            steam_sync_cooldown_secs: if cooldown_from_env {
+                SettingSource::Env
+            } else {
+                SettingSource::Default
+            },
+            cloudredirect_api_url: if config.cloudredirect_api_url.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false) {
+                SettingSource::Env
+            } else {
+                SettingSource::Unset
+            },
+            cloudredirect_api_key: if config.cloudredirect_api_key.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false) {
+                SettingSource::Env
+            } else {
+                SettingSource::Unset
+            },
         }
     }
 }
@@ -314,6 +404,7 @@ pub struct AppState {
     pub update_tx: tokio::sync::broadcast::Sender<()>,
     pub conn: Arc<Mutex<rusqlite::Connection>>,
     pub settings: RuntimeSettings,
+    pub settings_sources: SettingsSources,
     pub last_steam_sync_at: Option<u64>,
     pub last_steam_sync_status: Option<String>,
     pub last_steam_sync_message: Option<String>,
@@ -329,22 +420,60 @@ fn resolve_setting_with_env_tracking(
     meta: &HashMap<String, String>,
     value_key: &str,
     last_env_key: &str,
+    source_key: &str,
     env_val: Option<&str>,
-) -> (Option<String>, Option<String>) {
-    let env_clean = env_val.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-    let stored_val = meta.get(value_key).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    let last_env = meta.get(last_env_key).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    default_val: Option<&str>,
+) -> (Option<String>, Option<String>, SettingSource) {
+    let env_clean = env_val
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let stored_val = meta
+        .get(value_key)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let last_env = meta
+        .get(last_env_key)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let stored_source = meta.get(source_key).map(String::as_str);
 
     match env_clean {
         Some(ev) if last_env.as_deref() != Some(ev.as_str()) => {
             // Env changed (or newly set): apply env value and remember it
-            (Some(ev.clone()), Some(ev))
+            (Some(ev.clone()), Some(ev), SettingSource::Env)
         }
         Some(ev) => {
             // Env unchanged since last boot: keep DB value (preserves UI edits), or fallback to env
-            (stored_val.or(Some(ev.clone())), Some(ev))
+            match stored_val {
+                Some(sv) => {
+                    let src = if stored_source == Some("browser") || sv != ev {
+                        SettingSource::Browser
+                    } else {
+                        SettingSource::Env
+                    };
+                    (Some(sv), Some(ev), src)
+                }
+                None => (Some(ev.clone()), Some(ev), SettingSource::Env),
+            }
         }
-        None => (stored_val, None),
+        None => match stored_val {
+            Some(sv) => {
+                if let Some(def) = default_val {
+                    if stored_source == Some("browser") || sv != def {
+                        (Some(sv), None, SettingSource::Browser)
+                    } else {
+                        (Some(def.to_string()), None, SettingSource::Default)
+                    }
+                } else {
+                    (Some(sv), None, SettingSource::Browser)
+                }
+            }
+            None => match default_val {
+                Some(def) => (Some(def.to_string()), None, SettingSource::Default),
+                None => (None, None, SettingSource::Unset),
+            },
+        },
     }
 }
 
@@ -367,42 +496,66 @@ impl AppState {
         let (database, last_modified) = Self::load_initial_db(&mut conn, &db_path);
         let meta = get_all_metadata(&conn).unwrap_or_default();
 
-        let (steam_api_key, tracked_env_key) = resolve_setting_with_env_tracking(
+        let (steam_api_key, tracked_env_key, steam_api_key_source) = resolve_setting_with_env_tracking(
             &meta,
             meta_keys::STEAM_API_KEY,
             meta_keys::LAST_ENV_STEAM_API_KEY,
+            meta_keys::SOURCE_STEAM_API_KEY,
             config.steam_api_key.as_deref(),
+            None,
         );
-        let (steam_id_opt, tracked_env_steam_id) = resolve_setting_with_env_tracking(
+
+        let env_steam_id = if config.steam_id_from_env || config.steam_id != DEFAULT_STEAM_ID {
+            Some(config.steam_id.as_str())
+        } else {
+            None
+        };
+        let (steam_id_opt, tracked_env_steam_id, steam_id_source) = resolve_setting_with_env_tracking(
             &meta,
             meta_keys::STEAM_ID,
             meta_keys::LAST_ENV_STEAM_ID,
-            Some(config.steam_id.as_str()),
+            meta_keys::SOURCE_STEAM_ID,
+            env_steam_id,
+            Some(DEFAULT_STEAM_ID),
         );
         let steam_id = steam_id_opt.unwrap_or_else(|| DEFAULT_STEAM_ID.to_string());
 
         let env_cooldown_str = config.steam_sync_cooldown_secs.to_string();
-        let (cooldown_opt, tracked_env_cooldown) = resolve_setting_with_env_tracking(
+        let default_cooldown_str = DEFAULT_STEAM_SYNC_COOLDOWN_SECS.to_string();
+        let env_cooldown = if config.cooldown_from_env
+            || config.steam_sync_cooldown_secs != DEFAULT_STEAM_SYNC_COOLDOWN_SECS
+        {
+            Some(env_cooldown_str.as_str())
+        } else {
+            None
+        };
+        let (cooldown_opt, tracked_env_cooldown, cooldown_source) = resolve_setting_with_env_tracking(
             &meta,
             meta_keys::STEAM_SYNC_COOLDOWN_SECS,
             meta_keys::LAST_ENV_STEAM_SYNC_COOLDOWN_SECS,
-            Some(env_cooldown_str.as_str()),
+            meta_keys::SOURCE_STEAM_SYNC_COOLDOWN_SECS,
+            env_cooldown,
+            Some(default_cooldown_str.as_str()),
         );
         let steam_sync_cooldown_secs = cooldown_opt
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(config.steam_sync_cooldown_secs);
 
-        let (cloudredirect_api_url, tracked_env_cr_url) = resolve_setting_with_env_tracking(
+        let (cloudredirect_api_url, tracked_env_cr_url, cr_url_source) = resolve_setting_with_env_tracking(
             &meta,
             meta_keys::CLOUDREDIRECT_API_URL,
             meta_keys::LAST_ENV_CLOUDREDIRECT_API_URL,
+            meta_keys::SOURCE_CLOUDREDIRECT_API_URL,
             config.cloudredirect_api_url.as_deref(),
+            None,
         );
-        let (cloudredirect_api_key, tracked_env_cr_key) = resolve_setting_with_env_tracking(
+        let (cloudredirect_api_key, tracked_env_cr_key, cr_key_source) = resolve_setting_with_env_tracking(
             &meta,
             meta_keys::CLOUDREDIRECT_API_KEY,
             meta_keys::LAST_ENV_CLOUDREDIRECT_API_KEY,
+            meta_keys::SOURCE_CLOUDREDIRECT_API_KEY,
             config.cloudredirect_api_key.as_deref(),
+            None,
         );
 
         let _ = apply_metadata_batch(
@@ -410,8 +563,10 @@ impl AppState {
             &[
                 (meta_keys::STEAM_API_KEY, steam_api_key.as_deref()),
                 (meta_keys::LAST_ENV_STEAM_API_KEY, tracked_env_key.as_deref()),
+                (meta_keys::SOURCE_STEAM_API_KEY, steam_api_key_source.metadata_tag()),
                 (meta_keys::STEAM_ID, Some(steam_id.as_str())),
                 (meta_keys::LAST_ENV_STEAM_ID, tracked_env_steam_id.as_deref()),
+                (meta_keys::SOURCE_STEAM_ID, steam_id_source.metadata_tag()),
                 (
                     meta_keys::STEAM_SYNC_COOLDOWN_SECS,
                     Some(steam_sync_cooldown_secs.to_string().as_str()),
@@ -419,6 +574,10 @@ impl AppState {
                 (
                     meta_keys::LAST_ENV_STEAM_SYNC_COOLDOWN_SECS,
                     tracked_env_cooldown.as_deref(),
+                ),
+                (
+                    meta_keys::SOURCE_STEAM_SYNC_COOLDOWN_SECS,
+                    cooldown_source.metadata_tag(),
                 ),
                 (
                     meta_keys::CLOUDREDIRECT_API_URL,
@@ -429,12 +588,20 @@ impl AppState {
                     tracked_env_cr_url.as_deref(),
                 ),
                 (
+                    meta_keys::SOURCE_CLOUDREDIRECT_API_URL,
+                    cr_url_source.metadata_tag(),
+                ),
+                (
                     meta_keys::CLOUDREDIRECT_API_KEY,
                     cloudredirect_api_key.as_deref(),
                 ),
                 (
                     meta_keys::LAST_ENV_CLOUDREDIRECT_API_KEY,
                     tracked_env_cr_key.as_deref(),
+                ),
+                (
+                    meta_keys::SOURCE_CLOUDREDIRECT_API_KEY,
+                    cr_key_source.metadata_tag(),
                 ),
             ],
         );
@@ -468,6 +635,13 @@ impl AppState {
                 cloudredirect_api_url,
                 cloudredirect_api_key,
             },
+            settings_sources: SettingsSources {
+                steam_api_key: steam_api_key_source,
+                steam_id: steam_id_source,
+                steam_sync_cooldown_secs: cooldown_source,
+                cloudredirect_api_url: cr_url_source,
+                cloudredirect_api_key: cr_key_source,
+            },
             last_steam_sync_at,
             last_steam_sync_status,
             last_steam_sync_message,
@@ -497,6 +671,7 @@ impl AppState {
             update_tx,
             conn: Arc::new(Mutex::new(conn)),
             settings: RuntimeSettings::from_config(config),
+            settings_sources: SettingsSources::from_config(config),
             last_steam_sync_at: None,
             last_steam_sync_status: None,
             last_steam_sync_message: None,
@@ -523,7 +698,7 @@ impl AppState {
         }
     }
 
-    /// Persists the current Two Settings values into the SQLite `metadata` table.
+    /// Persists the current Two Settings values and their source tags into the SQLite `metadata` table.
     pub fn persist_settings_to_db(&self) -> Result<(), std::io::Error> {
         let mut conn = self
             .conn
@@ -534,15 +709,35 @@ impl AppState {
             &mut conn,
             &[
                 (meta_keys::STEAM_API_KEY, self.settings.steam_api_key.as_deref()),
+                (
+                    meta_keys::SOURCE_STEAM_API_KEY,
+                    self.settings_sources.steam_api_key.metadata_tag(),
+                ),
                 (meta_keys::STEAM_ID, Some(self.settings.steam_id.as_str())),
+                (
+                    meta_keys::SOURCE_STEAM_ID,
+                    self.settings_sources.steam_id.metadata_tag(),
+                ),
                 (meta_keys::STEAM_SYNC_COOLDOWN_SECS, Some(cooldown_str.as_str())),
+                (
+                    meta_keys::SOURCE_STEAM_SYNC_COOLDOWN_SECS,
+                    self.settings_sources.steam_sync_cooldown_secs.metadata_tag(),
+                ),
                 (
                     meta_keys::CLOUDREDIRECT_API_URL,
                     self.settings.cloudredirect_api_url.as_deref(),
                 ),
                 (
+                    meta_keys::SOURCE_CLOUDREDIRECT_API_URL,
+                    self.settings_sources.cloudredirect_api_url.metadata_tag(),
+                ),
+                (
                     meta_keys::CLOUDREDIRECT_API_KEY,
                     self.settings.cloudredirect_api_key.as_deref(),
+                ),
+                (
+                    meta_keys::SOURCE_CLOUDREDIRECT_API_KEY,
+                    self.settings_sources.cloudredirect_api_key.metadata_tag(),
                 ),
             ],
         )

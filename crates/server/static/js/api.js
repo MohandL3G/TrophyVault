@@ -179,7 +179,7 @@ export function getOvrTier(score) {
  */
 export function cleanGameTitle(name = '') {
   if (!name) return '';
-  return name.replace(/\s*\((?:Steam|Steam Version|PC Recomp|PC Port|Non-Steam|LuaTools)\)/gi, '').trim();
+  return name.replace(/\s*\((?:Steam|Steam Version|LuaTools)\)/gi, '').trim();
 }
 
 /**
@@ -188,9 +188,7 @@ export function cleanGameTitle(name = '') {
 export function normalizePlatform(platform = '') {
   const p = platform.toLowerCase();
   if (p.includes('steam') || p.includes('luatools') || p.includes('stplug')) return 'Steam';
-  if (p.includes('non-steam') || p.includes('shortcut')) return 'Non-Steam';
-  if (p.includes('port') || p.includes('bloodborne') || p.includes('shadps4') || p.includes('bbport')) return 'Ports';
-  return platform || 'Custom';
+  return platform || 'Steam';
 }
 
 /**

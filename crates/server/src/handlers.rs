@@ -22,7 +22,7 @@ use trophyvault_core::storage::{database_to_achievements_data, LibraryDatabase};
 
 use std::sync::atomic::Ordering;
 use crate::badge::generate_badge_svg;
-use crate::state::{current_timestamp, SharedState};
+use crate::state::{current_timestamp, SettingSource, SharedState};
 use crate::steam::{run_steam_sync, SteamSyncOutcome};
 
 /// Query parameters for /api/sync endpoint.
@@ -42,8 +42,14 @@ pub struct SteamSyncQuery {
 #[derive(Debug, Serialize)]
 pub struct SteamSettingsStatus {
     pub api_key_configured: bool,
+    pub api_key_source: &'static str,
+    pub api_key_from_env: bool,
     pub steam_id: String,
+    pub steam_id_source: &'static str,
+    pub steam_id_from_env: bool,
     pub cooldown_secs: u64,
+    pub cooldown_source: &'static str,
+    pub cooldown_from_env: bool,
     pub persona_name: Option<String>,
     pub avatar_url: Option<String>,
     pub last_sync_at: Option<u64>,
@@ -58,7 +64,11 @@ pub struct SteamSettingsStatus {
 pub struct CloudRedirectSettingsStatus {
     pub configured: bool,
     pub api_url: String,
+    pub api_url_source: &'static str,
+    pub api_url_from_env: bool,
     pub api_key_configured: bool,
+    pub api_key_source: &'static str,
+    pub api_key_from_env: bool,
     pub status: &'static str,
 }
 
@@ -646,11 +656,6 @@ pub async fn game_trophies_handler(
         }
     }
 
-    // Fallback for Bloodborne: if game is Bloodborne, populate default 40 trophies
-    if game_id.eq_ignore_ascii_case("bloodborne") {
-        return Json(trophyvault_core::bloodborne::default_bloodborne_trophies());
-    }
-
     // Return empty array for games with no trophy manifest
     Json(Vec::new())
 }
@@ -701,9 +706,6 @@ pub async fn single_game_handler(
                         }
                     }
                 }
-            }
-            if trophies.is_empty() && (game.id.eq_ignore_ascii_case("bloodborne") || game.name.eq_ignore_ascii_case("Bloodborne")) {
-                trophies = trophyvault_core::bloodborne::default_bloodborne_trophies();
             }
 
             Ok(Json(SingleGameDetailResponse {
@@ -899,8 +901,14 @@ async fn build_settings_status(state: &SharedState) -> SettingsStatusResponse {
     SettingsStatusResponse {
         steam: SteamSettingsStatus {
             api_key_configured,
+            api_key_source: guard.settings_sources.steam_api_key.as_str(),
+            api_key_from_env: guard.settings_sources.steam_api_key.is_env(),
             steam_id: guard.settings.steam_id.clone(),
+            steam_id_source: guard.settings_sources.steam_id.as_str(),
+            steam_id_from_env: guard.settings_sources.steam_id.is_env(),
             cooldown_secs: guard.settings.steam_sync_cooldown_secs,
+            cooldown_source: guard.settings_sources.steam_sync_cooldown_secs.as_str(),
+            cooldown_from_env: guard.settings_sources.steam_sync_cooldown_secs.is_env(),
             persona_name: guard.steam_persona_name.clone(),
             avatar_url: guard.steam_avatar_url.clone(),
             last_sync_at: guard.last_steam_sync_at,
@@ -912,7 +920,11 @@ async fn build_settings_status(state: &SharedState) -> SettingsStatusResponse {
         cloudredirect: CloudRedirectSettingsStatus {
             configured: !cr_url.trim().is_empty() && cr_key_configured,
             api_url: cr_url,
+            api_url_source: guard.settings_sources.cloudredirect_api_url.as_str(),
+            api_url_from_env: guard.settings_sources.cloudredirect_api_url.is_env(),
             api_key_configured: cr_key_configured,
+            api_key_source: guard.settings_sources.cloudredirect_api_key.as_str(),
+            api_key_from_env: guard.settings_sources.cloudredirect_api_key.is_env(),
             status: "placeholder",
         },
     }
@@ -966,36 +978,52 @@ pub async fn update_settings_handler(
 
         if payload.clear_steam_api_key == Some(true) {
             guard.settings.steam_api_key = None;
+            guard.settings_sources.steam_api_key = SettingSource::Unset;
         } else if let Some(ref key) = payload.steam_api_key {
             let trimmed = key.trim();
             if !trimmed.is_empty() {
                 guard.settings.steam_api_key = Some(trimmed.to_string());
+                guard.settings_sources.steam_api_key = SettingSource::Browser;
             }
         }
 
         if let Some(ref sid) = payload.steam_id {
-            guard.settings.steam_id = sid.trim().to_string();
+            let trimmed = sid.trim().to_string();
+            if trimmed != guard.settings.steam_id {
+                guard.settings.steam_id = trimmed;
+                guard.settings_sources.steam_id = SettingSource::Browser;
+            }
         }
 
         if let Some(cooldown) = payload.steam_sync_cooldown_secs {
-            guard.settings.steam_sync_cooldown_secs = cooldown;
+            if cooldown != guard.settings.steam_sync_cooldown_secs {
+                guard.settings.steam_sync_cooldown_secs = cooldown;
+                guard.settings_sources.steam_sync_cooldown_secs = SettingSource::Browser;
+            }
         }
 
         if let Some(ref url) = payload.cloudredirect_api_url {
             let trimmed = url.trim();
-            guard.settings.cloudredirect_api_url = if trimmed.is_empty() {
-                None
+            if trimmed.is_empty() {
+                guard.settings.cloudredirect_api_url = None;
+                guard.settings_sources.cloudredirect_api_url = SettingSource::Unset;
             } else {
-                Some(trimmed.to_string())
-            };
+                let next_url = Some(trimmed.to_string());
+                if next_url != guard.settings.cloudredirect_api_url {
+                    guard.settings.cloudredirect_api_url = next_url;
+                    guard.settings_sources.cloudredirect_api_url = SettingSource::Browser;
+                }
+            }
         }
 
         if payload.clear_cloudredirect_api_key == Some(true) {
             guard.settings.cloudredirect_api_key = None;
+            guard.settings_sources.cloudredirect_api_key = SettingSource::Unset;
         } else if let Some(ref key) = payload.cloudredirect_api_key {
             let trimmed = key.trim();
             if !trimmed.is_empty() {
                 guard.settings.cloudredirect_api_key = Some(trimmed.to_string());
+                guard.settings_sources.cloudredirect_api_key = SettingSource::Browser;
             }
         }
 

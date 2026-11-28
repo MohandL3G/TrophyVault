@@ -189,7 +189,6 @@
           <div class="hud-filter-group" id="platformFilters" role="radiogroup" aria-label="Filter by Platform">
             <button class="hud-filter-btn active" data-platform="all">All</button>
             <button class="hud-filter-btn" data-platform="steam">Steam</button>
-            <button class="hud-filter-btn" data-platform="ports">Ports</button>
             <div class="hud-filter-divider"></div>
             <button class="hud-filter-btn hud-filter-100" id="filter100Btn" data-perfect="false" title="Filter 100% Completed Games Only">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" class="gold-trophy-icon">
@@ -390,9 +389,6 @@
               <button class="hud-theme-chip" data-theme="gold" style="--chip-color: #ffd700;">
                 <span class="chip-dot"></span>Gold
               </button>
-              <button class="hud-theme-chip" data-theme="bloodborne" style="--chip-color: #ff3366;">
-                <span class="chip-dot"></span>Bloodborne
-              </button>
               <button class="hud-theme-chip" data-theme="matrix" style="--chip-color: #00ff88;">
                 <span class="chip-dot"></span>Matrix
               </button>
@@ -555,7 +551,11 @@
       <div class="hud-share-header">
         <div class="hud-badge-cyan">SERVER CONFIGURATION</div>
         <h2 class="hud-modal-title" id="settingsModalTitle">TrophyVault Settings</h2>
-        <p class="hud-share-desc">Manage Steam Web API ingestion and CloudRedirect placeholder endpoints. Changes persist in SQLite.</p>
+        <p class="hud-share-desc">Manage Steam Web API ingestion and CloudRedirect placeholder endpoints.</p>
+      </div>
+
+      <div class="hud-settings-notice" id="settingsPrecedenceNotice">
+        <strong>Persistence &amp; .env Precedence:</strong> Browser edits are saved to SQLite and persist across container restarts unless the matching variable in <code>.env</code> / Docker Compose changes.
       </div>
 
       <div class="hud-settings-sections">
@@ -564,21 +564,27 @@
           <div class="hud-settings-section-head">
             <div>
               <h3 class="hud-settings-section-title">1. Steam Web API</h3>
-              <p class="hud-settings-section-sub">Direct non-blocking sync of owned games, playtime, and trophy manifests.</p>
+              <p class="hud-settings-section-sub">Direct non-blocking sync of owned games, playtime, and achievement manifests.</p>
             </div>
             <span class="hud-status-pill" id="steamKeyStatusPill">CHECKING...</span>
           </div>
 
           <div class="hud-settings-grid">
             <div class="hud-form-group">
-              <label for="settingsSteamId" class="hud-form-label">STEAM ID (64-BIT)</label>
+              <div class="hud-label-row">
+                <label for="settingsSteamId" class="hud-form-label">STEAM ID (64-BIT)</label>
+                <span class="hud-source-badge source-default" id="settingsSteamIdSource">DEFAULT</span>
+              </div>
               <div class="hud-input-frame">
                 <input type="text" id="settingsSteamId" class="hud-input-field" placeholder="76561198423209668" autocomplete="off">
               </div>
             </div>
 
             <div class="hud-form-group">
-              <label for="settingsCooldownSecs" class="hud-form-label">SYNC COOLDOWN (SECONDS)</label>
+              <div class="hud-label-row">
+                <label for="settingsCooldownSecs" class="hud-form-label">SYNC COOLDOWN (SECONDS)</label>
+                <span class="hud-source-badge source-default" id="settingsCooldownSource">DEFAULT</span>
+              </div>
               <div class="hud-input-frame">
                 <input type="number" id="settingsCooldownSecs" class="hud-input-field" min="0" step="10" placeholder="300">
               </div>
@@ -586,7 +592,10 @@
           </div>
 
           <div class="hud-form-group">
-            <label for="settingsSteamApiKey" class="hud-form-label">STEAM API KEY</label>
+            <div class="hud-label-row">
+              <label for="settingsSteamApiKey" class="hud-form-label">STEAM API KEY</label>
+              <span class="hud-source-badge source-unset" id="settingsSteamKeySource">NOT SET</span>
+            </div>
             <div class="hud-input-frame">
               <input type="password" id="settingsSteamApiKey" class="hud-input-field" placeholder="Enter Steam Web API key (leave blank to keep existing)" autocomplete="off">
             </div>
@@ -599,21 +608,27 @@
           <div class="hud-settings-section-head">
             <div>
               <h3 class="hud-settings-section-title">2. CloudRedirect API <span class="hud-placeholder-tag">PLACEHOLDER</span></h3>
-              <p class="hud-settings-section-sub">Reserved endpoint for future CloudRedirect non-Steam / save sync integration.</p>
+              <p class="hud-settings-section-sub">Reserved endpoint for future CloudRedirect save/achievement sync integration.</p>
             </div>
             <span class="hud-status-pill pill-muted" id="crStatusPill">STANDBY</span>
           </div>
 
           <div class="hud-settings-grid">
             <div class="hud-form-group">
-              <label for="settingsCrUrl" class="hud-form-label">CLOUDREDIRECT API URL</label>
+              <div class="hud-label-row">
+                <label for="settingsCrUrl" class="hud-form-label">CLOUDREDIRECT API URL</label>
+                <span class="hud-source-badge source-unset" id="settingsCrUrlSource">NOT SET</span>
+              </div>
               <div class="hud-input-frame">
                 <input type="url" id="settingsCrUrl" class="hud-input-field" placeholder="https://cloudredirect.example.com" autocomplete="off">
               </div>
             </div>
 
             <div class="hud-form-group">
-              <label for="settingsCrKey" class="hud-form-label">CLOUDREDIRECT API KEY</label>
+              <div class="hud-label-row">
+                <label for="settingsCrKey" class="hud-form-label">CLOUDREDIRECT API KEY</label>
+                <span class="hud-source-badge source-unset" id="settingsCrKeySource">NOT SET</span>
+              </div>
               <div class="hud-input-frame">
                 <input type="password" id="settingsCrKey" class="hud-input-field" placeholder="Enter API key (leave blank to keep existing)" autocomplete="off">
               </div>

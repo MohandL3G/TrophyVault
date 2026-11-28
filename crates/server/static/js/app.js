@@ -114,11 +114,16 @@ class TrophyVaultApp {
       steamKeyStatusPill: document.getElementById('steamKeyStatusPill'),
       crStatusPill: document.getElementById('crStatusPill'),
       settingsSteamId: document.getElementById('settingsSteamId'),
+      settingsSteamIdSource: document.getElementById('settingsSteamIdSource'),
       settingsCooldownSecs: document.getElementById('settingsCooldownSecs'),
+      settingsCooldownSource: document.getElementById('settingsCooldownSource'),
       settingsSteamApiKey: document.getElementById('settingsSteamApiKey'),
+      settingsSteamKeySource: document.getElementById('settingsSteamKeySource'),
       steamSyncMetaText: document.getElementById('steamSyncMetaText'),
       settingsCrUrl: document.getElementById('settingsCrUrl'),
+      settingsCrUrlSource: document.getElementById('settingsCrUrlSource'),
       settingsCrKey: document.getElementById('settingsCrKey'),
+      settingsCrKeySource: document.getElementById('settingsCrKeySource'),
       settingsAdminPassword: document.getElementById('settingsAdminPassword'),
 
       // Avatar Modal
@@ -199,7 +204,7 @@ class TrophyVaultApp {
       const prefs = JSON.parse(raw);
       if (typeof prefs.selectedPlatform === 'string') {
         // Reset removed filter categories if cached in preferences
-        if (prefs.selectedPlatform === 'luatools' || prefs.selectedPlatform === 'non-steam') {
+        if (prefs.selectedPlatform === 'luatools' || prefs.selectedPlatform === 'non-steam' || prefs.selectedPlatform === 'ports') {
           this.selectedPlatform = 'all';
         } else {
           this.selectedPlatform = prefs.selectedPlatform;
@@ -759,7 +764,7 @@ class TrophyVaultApp {
           <div class="hud-card-banner-overlay"></div>
           <span class="hud-card-platform-tag">${normalizePlatform(game.platform)}</span>
           ${isCompleted ? `
-            <div class="hud-card-plat-badge" title="100% Platinum Completed">
+            <div class="hud-card-plat-badge" title="100% Completed">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
               </svg>
@@ -939,9 +944,9 @@ class TrophyVaultApp {
     if (this.dom.modalGamePct) this.dom.modalGamePct.textContent = `${game.pct || 0}%`;
     if (this.dom.modalGameTrophies) this.dom.modalGameTrophies.textContent = `${game.unlocked || 0} / ${game.total || 0}`;
     if (this.dom.modalGameStatus) {
-      const isPlat = game.platinum === true || game.pct === 100;
-      this.dom.modalGameStatus.textContent = isPlat ? '100% Platinum' : (game.unlocked > 0 ? 'In Progress' : 'Not Started');
-      this.dom.modalGameStatus.style.color = isPlat ? 'var(--gold)' : 'var(--cyan)';
+      const isPerfect = game.platinum === true || game.pct === 100;
+      this.dom.modalGameStatus.textContent = isPerfect ? '100% Perfect' : (game.unlocked > 0 ? 'In Progress' : 'Not Started');
+      this.dom.modalGameStatus.style.color = isPerfect ? 'var(--gold)' : 'var(--cyan)';
     }
     if (this.dom.modalGameProgressFill) {
       this.dom.modalGameProgressFill.style.width = `${game.pct || 0}%`;
@@ -997,9 +1002,9 @@ class TrophyVaultApp {
             if (this.dom.modalGameTrophies) this.dom.modalGameTrophies.textContent = `${game.unlocked} / ${game.total}`;
             if (this.dom.modalGameProgressFill) this.dom.modalGameProgressFill.style.width = `${game.pct}%`;
             if (this.dom.modalGameStatus) {
-              const isPlat = game.platinum === true || game.pct === 100;
-              this.dom.modalGameStatus.textContent = isPlat ? '100% Platinum' : (game.unlocked > 0 ? 'In Progress' : 'Not Started');
-              this.dom.modalGameStatus.style.color = isPlat ? 'var(--gold)' : 'var(--cyan)';
+              const isPerfect = game.platinum === true || game.pct === 100;
+              this.dom.modalGameStatus.textContent = isPerfect ? '100% Perfect' : (game.unlocked > 0 ? 'In Progress' : 'Not Started');
+              this.dom.modalGameStatus.style.color = isPerfect ? 'var(--gold)' : 'var(--cyan)';
             }
           }
         } else {
@@ -1069,33 +1074,12 @@ class TrophyVaultApp {
 
     filtered.forEach(trophy => {
       const isUnlocked = Boolean(trophy.unlocked_time || trophy.unlocked);
-      const rawGrade = (trophy.grade || 'Bronze').toLowerCase().trim();
-
-      let gradeClass = 'grade-bronze';
-      let gradeLabel = 'Bronze';
-      if (rawGrade.startsWith('p')) {
-        gradeClass = 'grade-platinum';
-        gradeLabel = 'Platinum';
-      } else if (rawGrade.startsWith('g')) {
-        gradeClass = 'grade-gold';
-        gradeLabel = 'Gold';
-      } else if (rawGrade.startsWith('s')) {
-        gradeClass = 'grade-silver';
-        gradeLabel = 'Silver';
-      } else {
-        gradeClass = 'grade-bronze';
-        gradeLabel = 'Bronze';
-      }
-
       const formattedDate = formatTrophyUnlockTime(trophy.unlocked_time);
 
       const card = document.createElement('div');
       card.className = `hud-trophy-card hud-trophy-item ${isUnlocked ? 'unlocked' : 'locked'}`;
 
       card.innerHTML = `
-        <div class="trophy-badge-col">
-          <div class="trophy-grade-badge ${gradeClass}" title="${gradeLabel} Trophy">${gradeLabel}</div>
-        </div>
         <div class="trophy-info">
           <div class="trophy-top-line">
             <span class="trophy-name">${this.escapeHtml(trophy.name || trophy.title || 'Trophy')}</span>
@@ -1537,6 +1521,24 @@ class TrophyVaultApp {
   }
 
   /**
+   * Render source provenance badge ("env" | "browser" | "default" | "unset")
+   */
+  renderSettingSourceBadge(el, source) {
+    if (!el) return;
+    const norm = (source || 'unset').toLowerCase();
+    const map = {
+      env: { text: 'FROM .ENV', cls: 'source-env', title: 'Loaded from .env / Docker Compose environment. Browser edits persist in SQLite until .env changes.' },
+      browser: { text: 'BROWSER (SQLITE)', cls: 'source-browser', title: 'Saved via Browser UI in SQLite; persists across container restarts unless .env changes.' },
+      default: { text: 'DEFAULT', cls: 'source-default', title: 'Using built-in default; browser edits persist in SQLite.' },
+      unset: { text: 'NOT SET', cls: 'source-unset', title: 'Not currently configured in .env or SQLite.' }
+    };
+    const meta = map[norm] || map.unset;
+    el.textContent = meta.text;
+    el.className = `hud-source-badge ${meta.cls}`;
+    el.title = meta.title;
+  }
+
+  /**
    * Open Admin-Protected Settings Modal
    */
   async openSettingsModal() {
@@ -1546,13 +1548,18 @@ class TrophyVaultApp {
       const cr = settings.cloudredirect || {};
 
       if (this.dom.settingsSteamId) this.dom.settingsSteamId.value = steam.steam_id || '76561198423209668';
+      this.renderSettingSourceBadge(this.dom.settingsSteamIdSource, steam.steam_id_source || 'default');
+
       if (this.dom.settingsCooldownSecs) this.dom.settingsCooldownSecs.value = steam.cooldown_secs ?? 300;
+      this.renderSettingSourceBadge(this.dom.settingsCooldownSource, steam.cooldown_source || 'default');
+
       if (this.dom.settingsSteamApiKey) {
         this.dom.settingsSteamApiKey.value = '';
         this.dom.settingsSteamApiKey.placeholder = steam.api_key_configured
           ? 'Configured (leave blank to keep existing key)'
           : 'Enter Steam Web API key';
       }
+      this.renderSettingSourceBadge(this.dom.settingsSteamKeySource, steam.api_key_source || (steam.api_key_configured ? 'browser' : 'unset'));
 
       if (this.dom.steamKeyStatusPill) {
         this.dom.steamKeyStatusPill.textContent = steam.api_key_configured ? 'CONFIGURED' : 'NOT CONFIGURED';
@@ -1566,12 +1573,16 @@ class TrophyVaultApp {
       }
 
       if (this.dom.settingsCrUrl) this.dom.settingsCrUrl.value = cr.api_url || '';
+      this.renderSettingSourceBadge(this.dom.settingsCrUrlSource, cr.api_url_source || (cr.api_url ? 'browser' : 'unset'));
+
       if (this.dom.settingsCrKey) {
         this.dom.settingsCrKey.value = '';
         this.dom.settingsCrKey.placeholder = cr.api_key_configured
           ? 'Configured (leave blank to keep existing key)'
           : 'Optional CloudRedirect API key';
       }
+      this.renderSettingSourceBadge(this.dom.settingsCrKeySource, cr.api_key_source || (cr.api_key_configured ? 'browser' : 'unset'));
+
       if (this.dom.crStatusPill) {
         this.dom.crStatusPill.textContent = cr.configured ? 'CONFIGURED (STANDBY)' : 'STANDBY PLACEHOLDER';
         this.dom.crStatusPill.className = `hud-status-pill ${cr.configured ? 'pill-ok' : 'pill-muted'}`;

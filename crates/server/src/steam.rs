@@ -2,8 +2,8 @@
 //!
 //! Fetches owned games, player summary, game achievement schemas, and unlocked
 //! achievements with timestamps directly from the Steam Web API, while
-//! preserving monotonic high-watermark playtimes and existing PC Port/manual
-//! entries (such as Bloodborne).
+//! preserving monotonic high-watermark playtimes and existing manual/non-Steam
+//! entries.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
@@ -399,11 +399,7 @@ pub fn build_trophies_from_steam(
                         }
                     });
 
-                let grade = if s.hidden.unwrap_or(0) == 1 {
-                    "Silver".to_string()
-                } else {
-                    "Bronze".to_string()
-                };
+                let grade = String::new();
 
                 SavedTrophy {
                     id: s.name.clone(),
@@ -442,7 +438,7 @@ pub fn build_trophies_from_steam(
                     .map(str::trim)
                     .unwrap_or("")
                     .to_string(),
-                grade: "Bronze".to_string(),
+                grade: String::new(),
                 unlocked,
                 unlocked_time,
             }
@@ -450,7 +446,7 @@ pub fn build_trophies_from_steam(
         .collect()
 }
 
-/// Returns true for Bloodborne / custom PC ports / non-Steam shortcuts that must never be overwritten by Steam Web API data.
+/// Returns true for custom manual / non-Steam shortcut entries that must never be overwritten by Steam Web API data.
 pub fn is_protected_non_steam_entry(entry: &SavedGameEntry) -> bool {
     let plat_lower = entry.platform.to_lowercase();
     entry.source == "manual"
@@ -971,19 +967,19 @@ mod tests {
         assert_eq!(trophies[0].id, "ACH_FIRST");
         assert_eq!(trophies[0].name, "First Blood");
         assert_eq!(trophies[0].description, "Defeat your first foe.");
-        assert_eq!(trophies[0].grade, "Bronze");
+        assert_eq!(trophies[0].grade, "");
         assert!(trophies[0].unlocked);
         assert_eq!(trophies[0].unlocked_time, Some(1732000123));
 
         assert_eq!(trophies[1].id, "ACH_SECRET");
         assert_eq!(trophies[1].description, "Hidden achievement");
-        assert_eq!(trophies[1].grade, "Silver");
+        assert_eq!(trophies[1].grade, "");
         assert!(!trophies[1].unlocked);
         assert_eq!(trophies[1].unlocked_time, None);
     }
 
     #[test]
-    fn test_merge_steam_game_preserves_monotonic_playtime_and_bloodborne() {
+    fn test_merge_steam_game_preserves_monotonic_playtime_and_manual_entries() {
         let mut db = LibraryDatabase {
             version: 1,
             last_updated: 1000,
@@ -992,13 +988,13 @@ mod tests {
             games: HashMap::new(),
         };
 
-        // Pre-existing Bloodborne PC port entry
+        // Pre-existing manual non-Steam entry
         db.games.insert(
-            "bloodborne".to_string(),
+            "custom-manual".to_string(),
             SavedGameEntry {
-                id: "bloodborne".to_string(),
-                name: "Bloodborne (PC Recomp)".to_string(),
-                platform: "PC Port / Recomp".to_string(),
+                id: "custom-manual".to_string(),
+                name: "Custom Manual Game".to_string(),
+                platform: "Non-Steam".to_string(),
                 appid: Some("2485153835".to_string()),
                 unlocked: 40,
                 total: 40,
@@ -1034,7 +1030,7 @@ mod tests {
                     id: "ACH_OLD".to_string(),
                     name: "Old Trophy".to_string(),
                     description: "Already unlocked".to_string(),
-                    grade: "Bronze".to_string(),
+                    grade: String::new(),
                     unlocked: true,
                     unlocked_time: Some(1730500000),
                 }],
@@ -1062,9 +1058,9 @@ mod tests {
         assert_eq!(er.trophies.len(), 1);
         assert_eq!(er.last_played, Some(1732000000));
 
-        // Bloodborne must be completely untouched
-        let bb = db.games.get("bloodborne").unwrap();
-        assert_eq!(bb.playtime_minutes, 5400);
-        assert_eq!(bb.source, "manual");
+        // Manual entry must be completely untouched
+        let manual = db.games.get("custom-manual").unwrap();
+        assert_eq!(manual.playtime_minutes, 5400);
+        assert_eq!(manual.source, "manual");
     }
 }
